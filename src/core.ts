@@ -64,7 +64,13 @@ export async function crawl(config: Config) {
             `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
           );
 
+          if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
+            log.warning("Skipping PDF URL: " + request.loadedUrl);
+            return;
+          }
+
           // Use custom handling for XPath selector
+          let content = "";
           if (config.selector) {
             if (config.selector.startsWith("/")) {
               await waitForXPath(
@@ -78,7 +84,7 @@ export async function crawl(config: Config) {
               });
             }
           }
-
+          content = await getPageHtml(page, config.selector);
           const html = await getPageHtml(page, config.selector);
 
           // Save results as JSON to ./storage/datasets/default
@@ -90,14 +96,33 @@ export async function crawl(config: Config) {
 
           // Extract links from the current page
           // and add them to the crawling queue.
-          await enqueueLinks({
-            globs:
-              typeof config.match === "string" ? [config.match] : config.match,
-            exclude:
-              typeof config.exclude === "string"
-                ? [config.exclude]
-                : config.exclude ?? [],
-          });
+          const { processedRequests, unprocessedRequests } = await enqueueLinks(
+            {
+              globs:
+                typeof config.match === "string"
+                  ? [config.match]
+                  : config.match,
+              exclude:
+                typeof config.exclude === "string"
+                  ? [config.exclude]
+                  : config.exclude ?? [],
+            },
+          );
+
+          const totalProcessedRequests = processedRequests.length;
+          const filteredRequests = processedRequests.filter(
+            (req) => !req.wasAlreadyPresent,
+          );
+          const filteredCount = filteredRequests.length;
+          const uniqueKeys = filteredRequests.map((req) => req.uniqueKey);
+
+          log.info(`Total processed requests: ${totalProcessedRequests}`);
+          log.info(
+            `Filtered requests count (wasAlreadyPresent: false): ${filteredCount}`,
+          );
+          log.info(
+            `Unique keys of filtered requests: ${uniqueKeys.join(", ")}`,
+          );
         },
         // Comment this option to scrape the full website.
         maxRequestsPerCrawl: config.maxPagesToCrawl,
@@ -106,6 +131,12 @@ export async function crawl(config: Config) {
         preNavigationHooks: [
           // Abort requests for certain resource types
           async ({ request, page, log }) => {
+            // Skip PDF URLs before navigation
+            if (request.url.endsWith(".pdf")) {
+              log.warning("Skipping PDF URL: " + request.url);
+              return;
+            }
+
             // If there are no resource exclusions, return
             const RESOURCE_EXCLUSTIONS = config.resourceExclusions ?? [];
             if (RESOURCE_EXCLUSTIONS.length === 0) {
