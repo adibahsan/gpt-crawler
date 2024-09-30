@@ -59,16 +59,17 @@ export async function crawl(config: Config) {
       {
         // Use the requestHandler to process each of the crawled pages.
         async requestHandler({ request, page, enqueueLinks, log, pushData }) {
-          const title = await page.title();
-          pageCounter++;
-          log.info(
-            `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
-          );
 
           if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
             log.warning("Skipping PDF URL: " + request.loadedUrl);
             return;
           }
+
+          const title = await page.title();
+          pageCounter++;
+          log.info(
+            `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
+          );
 
           // Use custom handling for XPath selector
           let content = "";
@@ -97,18 +98,17 @@ export async function crawl(config: Config) {
 
           // Extract links from the current page
           // and add them to the crawling queue.
-          const { processedRequests, unprocessedRequests } = await enqueueLinks(
-            {
-              globs:
-                typeof config.match === "string"
-                  ? [config.match]
-                  : config.match,
-              exclude:
-                typeof config.exclude === "string"
-                  ? [config.exclude]
-                  : config.exclude ?? [],
+          const { processedRequests, unprocessedRequests } = await enqueueLinks({
+            globs: typeof config.match === "string" ? [config.match] : config.match,
+            exclude: [
+              ...(typeof config.exclude === "string" ? [config.exclude] : config.exclude ?? []),
+              '**/*.pdf',  // Exclude PDF files from being enqueued
+            ],
+            transformRequestFunction: (request) => {
+              if (request.url.endsWith('.pdf')) return false;
+              return request;
             },
-          );
+          });
 
           const totalProcessedRequests = processedRequests.length;
           const filteredRequests = processedRequests.filter(
@@ -134,7 +134,7 @@ export async function crawl(config: Config) {
           async ({ request, page, log }) => {
             // Skip PDF URLs before navigation
             if (request.url.endsWith(".pdf")) {
-              log.warning("Skipping PDF URL: " + request.url);
+              log.info("Skipping PDF URL before navigation: " + request.url);
               return;
             }
 
@@ -280,12 +280,13 @@ class GPTCrawlerCore {
     await crawl(this.config);
   }
 
-
   async write(): Promise<PathLike> {
     return new Promise(async (resolve, reject) => {
       try {
         const baseFolder = "web-crawled";
-        const outputFolder = `${baseFolder}/${this.config.name || "defaultFolder"}`;
+        const outputFolder = `${baseFolder}/${
+          this.config.name || "defaultFolder"
+        }`;
 
         await mkdir(outputFolder, { recursive: true });
 
@@ -300,6 +301,7 @@ class GPTCrawlerCore {
         reject(error);
       }
     });
-  }}
+  }
+}
 
 export default GPTCrawlerCore;

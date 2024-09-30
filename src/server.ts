@@ -32,9 +32,10 @@ app.post("/crawl", async (req, res) => {
     return res.send(outputFileContent);
   } catch (error) {
     return res
-        .status(500)
-        .json({ message: "Error occurred during crawling", error });
-  }});
+      .status(500)
+      .json({ message: "Error occurred during crawling", error });
+  }
+});
 
 app.listen(port, hostname, () => {
   console.log(`API server listening at http://${hostname}:${port}`);
