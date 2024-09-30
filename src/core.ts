@@ -6,6 +6,7 @@ import { Config, configSchema } from "./config.js";
 import { Page } from "playwright";
 import { isWithinTokenLimit } from "gpt-tokenizer";
 import { PathLike } from "fs";
+import { mkdir } from "fs/promises";
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
@@ -279,16 +280,26 @@ class GPTCrawlerCore {
     await crawl(this.config);
   }
 
+
   async write(): Promise<PathLike> {
-    // we need to wait for the file path as the path can change
-    return new Promise((resolve, reject) => {
-      write(this.config)
-        .then((outputFilePath) => {
-          resolve(outputFilePath);
-        })
-        .catch(reject);
+    return new Promise(async (resolve, reject) => {
+      try {
+        const baseFolder = "web-crawled";
+        const outputFolder = `${baseFolder}/${this.config.name || "defaultFolder"}`;
+
+        await mkdir(outputFolder, { recursive: true });
+
+        const outputFilePath = await write(this.config);
+        const fullPath = `${outputFolder}/${outputFilePath}`;
+        const fileContent = await readFile(outputFilePath, "utf-8");
+        await writeFile(fullPath, fileContent);
+        console.log(`Wrote output to ${fullPath}`);
+        resolve(fullPath);
+      } catch (error) {
+        console.error(`Error in write method: ${error}`);
+        reject(error);
+      }
     });
-  }
-}
+  }}
 
 export default GPTCrawlerCore;

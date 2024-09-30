@@ -20,6 +20,7 @@ const messages = {
 async function handler(options: Config) {
   try {
     const {
+      name,
       url,
       match,
       selector,
@@ -31,6 +32,7 @@ async function handler(options: Config) {
     const maxPagesToCrawl = parseInt(maxPagesToCrawlStr, 10);
 
     let config: Config = {
+      name,
       url,
       match,
       selector,

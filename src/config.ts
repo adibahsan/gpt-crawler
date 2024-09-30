@@ -13,6 +13,8 @@ export const configSchema = z.object({
    * @example "https://www.builder.io/sitemap.xml"
    * @default ""
    */
+  name: z.string(),
+
   url: z.string(),
   /**
    * Pattern to match against for links on a page to subsequently crawl
