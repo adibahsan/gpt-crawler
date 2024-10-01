@@ -198,10 +198,10 @@ export async function write(config: Config) {
 
   let currentResults: Record<string, any>[] = [];
   let currentSize: number = 0;
-  let fileCounter: number = 1;
+  let fileCounter: number = 1; // Initialize a counter for serialized numbers
   const maxBytes: number = config.maxFileSize
-    ? config.maxFileSize * 1024 * 1024
-    : Infinity;
+      ? config.maxFileSize * 1024 * 1024
+      : Infinity;
 
   const getStringByteSize = (str: string): number =>
     Buffer.byteLength(str, "utf-8");
@@ -300,6 +300,8 @@ class GPTCrawlerCore {
 
         const combinedData = [];
 
+        let fileCounter = 1; // Initialize a counter for serialized numbers
+
         for (const file of files) {
           if (path.extname(file) === '.json') {
             const filePath = path.join(datasetFolder, file);
@@ -308,18 +310,26 @@ class GPTCrawlerCore {
 
             // Create a safe filename from the URL
             const safeFilename = this.createSafeFilename(data.url);
-            const jsonFilePath = path.join(jsonFolder, `${safeFilename}.json`);
+            // Add serialized number to the filename
+            const jsonFileName = `${fileCounter.toString().padStart(6, '0')}_${safeFilename}.json`;
+            const jsonFilePath = path.join(jsonFolder, jsonFileName);
 
             // Write the individual JSON file
             await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
             console.log(`Wrote JSON content to ${jsonFilePath}`);
 
-            // Add to combined data
-            combinedData.push(data);
+            // Add to combined data with filename and filetype
+            combinedData.push({
+              filename: jsonFileName,
+              filetype: 'json',
+              data: data
+            });
+
+            fileCounter++; // Increment the counter for the next file
           }
         }
 
-        // Write the combined JSON file
+        // Write the combined JSON file (without a serialized number)
         const combinedFilePath = path.join(outputFolder, 'combined_output.json');
         await writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2));
         console.log(`Wrote combined JSON to ${combinedFilePath}`);
