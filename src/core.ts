@@ -1,12 +1,13 @@
 // For more information, see https://crawlee.dev/
 import { Configuration, PlaywrightCrawler, downloadListOfUrls } from "crawlee";
-import { readFile, writeFile } from "fs/promises";
 import { glob } from "glob";
 import { Config, configSchema } from "./config.js";
 import { Page } from "playwright";
 import { isWithinTokenLimit } from "gpt-tokenizer";
 import { PathLike } from "fs";
 import { mkdir } from "fs/promises";
+import { readdir, readFile, writeFile } from 'fs/promises';
+import path from 'path';
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
@@ -287,20 +288,59 @@ class GPTCrawlerCore {
         const outputFolder = `${baseFolder}/${
           this.config.name || "defaultFolder"
         }`;
+        const jsonFolder = `${outputFolder}/json`;
 
+        // Create output and json folders
         await mkdir(outputFolder, { recursive: true });
+        await mkdir(jsonFolder, { recursive: true });
 
-        const outputFilePath = await write(this.config);
-        const fullPath = `${outputFolder}/${outputFilePath}`;
-        const fileContent = await readFile(outputFilePath, "utf-8");
-        await writeFile(fullPath, fileContent);
-        console.log(`Wrote output to ${fullPath}`);
-        resolve(fullPath);
+        // Read all JSON files from the default dataset folder
+        const datasetFolder = 'storage/datasets/default';
+        const files = await readdir(datasetFolder);
+
+        const combinedData = [];
+
+        for (const file of files) {
+          if (path.extname(file) === '.json') {
+            const filePath = path.join(datasetFolder, file);
+            const content = await readFile(filePath, 'utf-8');
+            const data = JSON.parse(content);
+
+            // Create a safe filename from the URL
+            const safeFilename = this.createSafeFilename(data.url);
+            const jsonFilePath = path.join(jsonFolder, `${safeFilename}.json`);
+
+            // Write the individual JSON file
+            await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+            console.log(`Wrote JSON content to ${jsonFilePath}`);
+
+            // Add to combined data
+            combinedData.push(data);
+          }
+        }
+
+        // Write the combined JSON file
+        const combinedFilePath = path.join(outputFolder, 'combined_output.json');
+        await writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2));
+        console.log(`Wrote combined JSON to ${combinedFilePath}`);
+
+        resolve(combinedFilePath);
       } catch (error) {
         console.error(`Error in write method: ${error}`);
         reject(error);
       }
     });
+  }
+
+  private createSafeFilename(url: string): string {
+    // Remove protocol and www
+    let filename = url.replace(/^(https?:\/\/)?(www\.)?/, '');
+    // Replace non-alphanumeric characters with underscores
+    filename = filename.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    // Trim underscores from start and end
+    filename = filename.replace(/^_+|_+$/g, '');
+    // Limit length
+    return filename.slice(0, 100);
   }
 }
 

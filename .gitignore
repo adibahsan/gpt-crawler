@@ -16,3 +16,5 @@ storage
 *.json
 .env
 pnpm-lock.yaml
+
+web-crawled/
