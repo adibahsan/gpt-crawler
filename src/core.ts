@@ -97,6 +97,26 @@ export async function crawl(config: Config) {
             await config.onVisitPage({ page, pushData });
           }
 
+          const links = await page.$$eval('a', (elements) =>
+            elements.map(el => {
+              const href = el.href;
+              if (!href) return null;
+              // Common document extensions to track
+              const fileExtensions = ['.html', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'];
+              if (fileExtensions.some(ext => href.toLowerCase().endsWith(ext)) || !href.includes('.')) {
+                return {
+                  url: href,
+                  type: href.split('.').pop()?.toLowerCase() || 'html'
+                };
+              }
+              return null;
+            }).filter(link => link !== null)
+          );
+          console.log('Found document links before enqueuing:', links);
+
+          let pdfLinks = links.filter(link => link?.type === 'pdf');
+
+          console.log("found pdf links", pdfLinks.map(link => link?.url));
           // Extract links from the current page
           // and add them to the crawling queue.
           const { processedRequests, unprocessedRequests } = await enqueueLinks({
