@@ -4,13 +4,30 @@ import { glob } from "glob";
 import { Config, configSchema } from "./config.js";
 import { Page } from "playwright";
 import { isWithinTokenLimit } from "gpt-tokenizer";
-import { PathLike } from "fs";
+import fs, { PathLike } from "fs";
 import { mkdir } from "fs/promises";
 import { readdir, readFile, writeFile } from "fs/promises";
 import path from "path";
+import axios from "axios";
+
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
+
+async function downloadPdf(url: string, outputPath: string) {
+  const response = await axios({
+    url,
+    method: "GET",
+    responseType: "stream",
+  });
+
+  return new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(outputPath);
+    response.data.pipe(writer);
+    writer.on("finish", resolve);
+    writer.on("error", reject);
+  });
+}
 
 export function getPageHtml(page: Page, selector = "body") {
   return page.evaluate((selector) => {
@@ -129,7 +146,10 @@ export async function crawl(config: Config) {
               })
               .filter((link) => link !== null),
           );
-          console.log("Found document links before enqueuing:", links?.map((link) => link?.url));
+          console.log(
+            "Found document links before enqueuing:",
+            links?.map((link) => link?.url),
+          );
 
           let pdfLinks = links.filter((link) => link?.type === "pdf");
 
@@ -137,6 +157,22 @@ export async function crawl(config: Config) {
             "found pdf links",
             pdfLinks.map((link) => link?.url),
           );
+
+          const baseFolder = "web-crawled";
+          const outputFolder = `${baseFolder}/${
+              config.name || "defaultFolder"
+          }`;
+          const pdfFolder = `${outputFolder}/pdf`;
+
+          // Create output and json folders
+          await mkdir(outputFolder, { recursive: true });
+          await mkdir(pdfFolder, { recursive: true });
+
+          for (const pdfLink of pdfLinks) {
+            const outputPath = path.join(pdfFolder, path.basename(pdfLink?.url ?? ""));
+            await downloadPdf(pdfLink?.url ?? "", outputPath);
+            log.info(`Downloaded PDF: ${pdfLink?.url} to ${outputPath}`);
+          }
           // Extract links from the current page
           // and add them to the crawling queue.
           const { processedRequests, unprocessedRequests } = await enqueueLinks(
