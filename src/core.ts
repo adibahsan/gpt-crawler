@@ -6,8 +6,8 @@ import { Page } from "playwright";
 import { isWithinTokenLimit } from "gpt-tokenizer";
 import { PathLike } from "fs";
 import { mkdir } from "fs/promises";
-import { readdir, readFile, writeFile } from 'fs/promises';
-import path from 'path';
+import { readdir, readFile, writeFile } from "fs/promises";
+import path from "path";
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
@@ -60,7 +60,6 @@ export async function crawl(config: Config) {
       {
         // Use the requestHandler to process each of the crawled pages.
         async requestHandler({ request, page, enqueueLinks, log, pushData }) {
-
           if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
             log.warning("Skipping PDF URL: " + request.loadedUrl);
             return;
@@ -97,39 +96,67 @@ export async function crawl(config: Config) {
             await config.onVisitPage({ page, pushData });
           }
 
-          const links = await page.$$eval('a', (elements) =>
-            elements.map(el => {
-              const href = el.href;
-              if (!href) return null;
-              // Common document extensions to track
-              const fileExtensions = ['.html', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'];
-              if (fileExtensions.some(ext => href.toLowerCase().endsWith(ext)) || !href.includes('.')) {
-                return {
-                  url: href,
-                  type: href.split('.').pop()?.toLowerCase() || 'html'
-                };
-              }
-              return null;
-            }).filter(link => link !== null)
+          const links = await page.$$eval("a", (elements) =>
+            elements
+              .map((el) => {
+                const href = el.href;
+                if (!href) return null;
+                // Common document extensions to track
+                const fileExtensions = [
+                  ".html",
+                  ".pdf",
+                  ".doc",
+                  ".docx",
+                  ".xls",
+                  ".xlsx",
+                  ".ppt",
+                  ".pptx",
+                  ".txt",
+                  ".csv",
+                ];
+                if (
+                  fileExtensions.some((ext) =>
+                    href.toLowerCase().endsWith(ext),
+                  ) ||
+                  !href.includes(".")
+                ) {
+                  return {
+                    url: href,
+                    type: href.split(".").pop()?.toLowerCase() || "html",
+                  };
+                }
+                return null;
+              })
+              .filter((link) => link !== null),
           );
-          console.log('Found document links before enqueuing:', links);
+          console.log("Found document links before enqueuing:", links?.map((link) => link?.url));
 
-          let pdfLinks = links.filter(link => link?.type === 'pdf');
+          let pdfLinks = links.filter((link) => link?.type === "pdf");
 
-          console.log("found pdf links", pdfLinks.map(link => link?.url));
+          console.log(
+            "found pdf links",
+            pdfLinks.map((link) => link?.url),
+          );
           // Extract links from the current page
           // and add them to the crawling queue.
-          const { processedRequests, unprocessedRequests } = await enqueueLinks({
-            globs: typeof config.match === "string" ? [config.match] : config.match,
-            exclude: [
-              ...(typeof config.exclude === "string" ? [config.exclude] : config.exclude ?? []),
-              '**/*.pdf',  // Exclude PDF files from being enqueued
-            ],
-            transformRequestFunction: (request) => {
-              if (request.url.endsWith('.pdf')) return false;
-              return request;
+          const { processedRequests, unprocessedRequests } = await enqueueLinks(
+            {
+              globs:
+                typeof config.match === "string"
+                  ? [config.match]
+                  : config.match,
+              exclude: [
+                ...(typeof config.exclude === "string"
+                  ? [config.exclude]
+                  : config.exclude ?? []),
+                "**/*.pdf", // Exclude PDF files from being enqueued
+              ],
+              transformRequestFunction: (request) => {
+                if (request.url.endsWith(".pdf")) return false;
+                return request;
+              },
             },
-          });
+          );
 
           const totalProcessedRequests = processedRequests.length;
           const filteredRequests = processedRequests.filter(
@@ -220,8 +247,8 @@ export async function write(config: Config) {
   let currentSize: number = 0;
   let fileCounter: number = 1; // Initialize a counter for serialized numbers
   const maxBytes: number = config.maxFileSize
-      ? config.maxFileSize * 1024 * 1024
-      : Infinity;
+    ? config.maxFileSize * 1024 * 1024
+    : Infinity;
 
   const getStringByteSize = (str: string): number =>
     Buffer.byteLength(str, "utf-8");
@@ -315,7 +342,7 @@ class GPTCrawlerCore {
         await mkdir(jsonFolder, { recursive: true });
 
         // Read all JSON files from the default dataset folder
-        const datasetFolder = 'storage/datasets/default';
+        const datasetFolder = "storage/datasets/default";
         const files = await readdir(datasetFolder);
 
         const combinedData = [];
@@ -323,15 +350,17 @@ class GPTCrawlerCore {
         let fileCounter = 1; // Initialize a counter for serialized numbers
 
         for (const file of files) {
-          if (path.extname(file) === '.json') {
+          if (path.extname(file) === ".json") {
             const filePath = path.join(datasetFolder, file);
-            const content = await readFile(filePath, 'utf-8');
+            const content = await readFile(filePath, "utf-8");
             const data = JSON.parse(content);
 
             // Create a safe filename from the URL
             const safeFilename = this.createSafeFilename(data.url);
             // Add serialized number to the filename
-            const jsonFileName = `${fileCounter.toString().padStart(6, '0')}_${safeFilename}.json`;
+            const jsonFileName = `${fileCounter
+              .toString()
+              .padStart(6, "0")}_${safeFilename}.json`;
             const jsonFilePath = path.join(jsonFolder, jsonFileName);
 
             // Write the individual JSON file
@@ -341,8 +370,8 @@ class GPTCrawlerCore {
             // Add to combined data with filename and filetype
             combinedData.push({
               filename: jsonFileName,
-              filetype: 'json',
-              data: data
+              filetype: "json",
+              data: data,
             });
 
             fileCounter++; // Increment the counter for the next file
@@ -350,8 +379,14 @@ class GPTCrawlerCore {
         }
 
         // Write the combined JSON file (without a serialized number)
-        const combinedFilePath = path.join(outputFolder, 'combined_output.json');
-        await writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2));
+        const combinedFilePath = path.join(
+          outputFolder,
+          "combined_output.json",
+        );
+        await writeFile(
+          combinedFilePath,
+          JSON.stringify(combinedData, null, 2),
+        );
         console.log(`Wrote combined JSON to ${combinedFilePath}`);
 
         resolve(combinedFilePath);
@@ -364,11 +399,11 @@ class GPTCrawlerCore {
 
   private createSafeFilename(url: string): string {
     // Remove protocol and www
-    let filename = url.replace(/^(https?:\/\/)?(www\.)?/, '');
+    let filename = url.replace(/^(https?:\/\/)?(www\.)?/, "");
     // Replace non-alphanumeric characters with underscores
-    filename = filename.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    filename = filename.replace(/[^a-z0-9]/gi, "_").toLowerCase();
     // Trim underscores from start and end
-    filename = filename.replace(/^_+|_+$/g, '');
+    filename = filename.replace(/^_+|_+$/g, "");
     // Limit length
     return filename.slice(0, 100);
   }
