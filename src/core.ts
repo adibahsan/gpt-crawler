@@ -9,11 +9,31 @@ import { mkdir } from "fs/promises";
 import { readdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import axios from "axios";
+import PDFParser from "pdf2json";
+import { parseOfficeAsync } from "officeparser";
 
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
 
+const pdfParser = new PDFParser(this, true);
+pdfParser.on("pdfParser_dataError", (errData) =>
+    console.error(errData.parserError)
+);
+pdfParser.on("pdfParser_dataReady", (pdfData) => {
+  console.log("pdfData", pdfData);
+});
+
+async function extractTextFromFile(path: string) {
+  try {
+    const data = await parseOfficeAsync(path);
+    let output = data.toString();
+    console.log("output of PDF", output);
+    return output;
+  } catch (error) {
+    return error;
+  }
+}
 async function downloadPdf(url: string, outputPath: string) {
   const response = await axios({
     url,
@@ -171,8 +191,13 @@ export async function crawl(config: Config) {
           for (const pdfLink of pdfLinks) {
             const outputPath = path.join(pdfFolder, path.basename(pdfLink?.url ?? ""));
             await downloadPdf(pdfLink?.url ?? "", outputPath);
+
             log.info(`Downloaded PDF: ${pdfLink?.url} to ${outputPath}`);
+            // await pdfParser.loadPDF(outputPath);
+            const fileContent = await extractTextFromFile(outputPath);
+            console.log("file content", fileContent);
           }
+
           // Extract links from the current page
           // and add them to the crawling queue.
           const { processedRequests, unprocessedRequests } = await enqueueLinks(
