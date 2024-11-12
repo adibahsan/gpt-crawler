@@ -1,4 +1,3 @@
-// For more information, see https://crawlee.dev/
 import { Configuration, PlaywrightCrawler, downloadListOfUrls } from "crawlee";
 import { glob } from "glob";
 import { Config, configSchema } from "./config.js";
@@ -12,58 +11,65 @@ import axios from "axios";
 import PDFParser from "pdf2json";
 import { parseOfficeAsync } from "officeparser";
 
-
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
 
 const pdfParser = new PDFParser(this, true);
 pdfParser.on("pdfParser_dataError", (errData) =>
-    console.error(errData.parserError)
+    console.error(errData.parserError),
 );
 pdfParser.on("pdfParser_dataReady", (pdfData) => {
   console.log("pdfData", pdfData);
 });
 
-async function extractTextFromFile(path: string) {
+async function extractTextFromFile(filePath: string) {
   try {
-    const data = await parseOfficeAsync(path);
-    let output = data.toString();
+    const data = await parseOfficeAsync(filePath);
+    const output = data.toString();
     console.log("output of PDF", output);
     return output;
   } catch (error) {
-    return error;
+    console.error(`Error extracting text from file ${filePath}:`, error);
+    throw error;
   }
 }
-async function downloadPdf(url: string, outputPath: string) {
-  const response = await axios({
-    url,
-    method: "GET",
-    responseType: "stream",
-  });
 
-  return new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(outputPath);
-    response.data.pipe(writer);
-    writer.on("finish", resolve);
-    writer.on("error", reject);
-  });
+async function downloadPdf(url: string, outputPath: string) {
+  try {
+    const response = await axios({
+      url,
+      method: "GET",
+      responseType: "stream",
+    });
+
+    return new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(outputPath);
+      response.data.pipe(writer);
+      writer.on("finish", resolve);
+      writer.on("error", (error) => {
+        console.error(`Error writing PDF to ${outputPath}:`, error);
+        reject(error);
+      });
+    });
+  } catch (error) {
+    console.error(`Error downloading PDF from ${url}:`, error);
+    throw error;
+  }
 }
 
 export function getPageHtml(page: Page, selector = "body") {
   return page.evaluate((selector) => {
-    // Check if the selector is an XPath
     if (selector.startsWith("/")) {
       const elements = document.evaluate(
-        selector,
-        document,
-        null,
-        XPathResult.ANY_TYPE,
-        null,
+          selector,
+          document,
+          null,
+          XPathResult.ANY_TYPE,
+          null,
       );
-      let result = elements.iterateNext();
+      const result = elements.iterateNext();
       return result ? result.textContent || "" : "";
     } else {
-      // Handle as a CSS selector
       const el = document.querySelector(selector) as HTMLElement | null;
       return el?.innerText || "";
     }
@@ -72,18 +78,18 @@ export function getPageHtml(page: Page, selector = "body") {
 
 export async function waitForXPath(page: Page, xpath: string, timeout: number) {
   await page.waitForFunction(
-    (xpath) => {
-      const elements = document.evaluate(
-        xpath,
-        document,
-        null,
-        XPathResult.ANY_TYPE,
-        null,
-      );
-      return elements.iterateNext() !== null;
-    },
-    xpath,
-    { timeout },
+      (xpath) => {
+        const elements = document.evaluate(
+            xpath,
+            document,
+            null,
+            XPathResult.ANY_TYPE,
+            null,
+        );
+        return elements.iterateNext() !== null;
+      },
+      xpath,
+      { timeout },
   );
 }
 
@@ -91,290 +97,271 @@ export async function crawl(config: Config) {
   configSchema.parse(config);
 
   if (process.env.NO_CRAWL !== "true") {
-    // PlaywrightCrawler crawls the web using a headless
-    // browser controlled by the Playwright library.
     crawler = new PlaywrightCrawler(
-      {
-        // Use the requestHandler to process each of the crawled pages.
-        async requestHandler({ request, page, enqueueLinks, log, pushData }) {
-          if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
-            log.warning("Skipping PDF URL: " + request.loadedUrl);
-            return;
-          }
+        {
+          async requestHandler({ request, page, enqueueLinks, log, pushData }) {
+            try {
+              if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
+                log.warning("Skipping PDF URL: " + request.loadedUrl);
+                return;
+              }
 
-          const title = await page.title();
-          pageCounter++;
-          log.info(
-            `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
-          );
-
-          // Use custom handling for XPath selector
-          let content = "";
-          if (config.selector) {
-            if (config.selector.startsWith("/")) {
-              await waitForXPath(
-                page,
-                config.selector,
-                config.waitForSelectorTimeout ?? 1000,
+              const title = await page.title();
+              pageCounter++;
+              log.info(
+                  `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
               );
-            } else {
-              await page.waitForSelector(config.selector, {
-                timeout: config.waitForSelectorTimeout ?? 1000,
-              });
-            }
-          }
-          content = await getPageHtml(page, config.selector);
-          const html = await getPageHtml(page, config.selector);
 
-          // Save results as JSON to ./storage/datasets/default
-          await pushData({ title, url: request.loadedUrl, html });
-
-          if (config.onVisitPage) {
-            // @ts-ignore
-            await config.onVisitPage({ page, pushData });
-          }
-
-          const links = await page.$$eval("a", (elements) =>
-            elements
-              .map((el) => {
-                const href = el.href;
-                if (!href) return null;
-                // Common document extensions to track
-                const fileExtensions = [
-                  ".html",
-                  ".pdf",
-                  ".doc",
-                  ".docx",
-                  ".xls",
-                  ".xlsx",
-                  ".ppt",
-                  ".pptx",
-                  ".txt",
-                  ".csv",
-                ];
-                if (
-                  fileExtensions.some((ext) =>
-                    href.toLowerCase().endsWith(ext),
-                  ) ||
-                  !href.includes(".")
-                ) {
-                  return {
-                    url: href,
-                    type: href.split(".").pop()?.toLowerCase() || "html",
-                  };
+              let content = "";
+              if (config.selector) {
+                if (config.selector.startsWith("/")) {
+                  await waitForXPath(
+                      page,
+                      config.selector,
+                      config.waitForSelectorTimeout ?? 1000,
+                  );
+                } else {
+                  await page.waitForSelector(config.selector, {
+                    timeout: config.waitForSelectorTimeout ?? 1000,
+                  });
                 }
-                return null;
-              })
-              .filter((link) => link !== null),
-          );
-          console.log(
-            "Found document links before enqueuing:",
-            links?.map((link) => link?.url),
-          );
+              }
+              content = await getPageHtml(page, config.selector);
+              const html = await getPageHtml(page, config.selector);
 
-          let pdfLinks = links.filter((link) => link?.type === "pdf");
+              await pushData({ title, url: request.loadedUrl, html });
 
-          console.log(
-            "found pdf links",
-            pdfLinks.map((link) => link?.url),
-          );
+              if (config.onVisitPage) {
+                // @ts-ignore
+                await config.onVisitPage({ page, pushData });
+              }
 
-          const baseFolder = "web-crawled";
-          const outputFolder = `${baseFolder}/${
-              config.name || "defaultFolder"
-          }`;
-          const pdfFolder = `${outputFolder}/pdf`;
+              const links = await page.$$eval("a", (elements) =>
+                  elements
+                      .map((el) => {
+                        const href = el.href;
+                        if (!href) return null;
+                        const fileExtensions = [
+                          ".html",
+                          ".pdf",
+                          ".doc",
+                          ".docx",
+                          ".xls",
+                          ".xlsx",
+                          ".ppt",
+                          ".pptx",
+                          ".txt",
+                          ".csv",
+                        ];
+                        if (
+                            fileExtensions.some((ext) =>
+                                href.toLowerCase().endsWith(ext),
+                            ) ||
+                            !href.includes(".")
+                        ) {
+                          return {
+                            url: href,
+                            type: href.split(".").pop()?.toLowerCase() || "html",
+                          };
+                        }
+                        return null;
+                      })
+                      .filter((link) => link !== null),
+              );
 
-          // Create output and json folders
-          await mkdir(outputFolder, { recursive: true });
-          await mkdir(pdfFolder, { recursive: true });
+              const pdfLinks = links.filter((link) => link?.type === "pdf");
 
-          for (const pdfLink of pdfLinks) {
-            const outputPath = path.join(pdfFolder, path.basename(pdfLink?.url ?? ""));
-            await downloadPdf(pdfLink?.url ?? "", outputPath);
+              const baseFolder = "web-crawled";
+              const outputFolder = `${baseFolder}/${
+                  config.name || "defaultFolder"
+              }`;
+              const pdfFolder = `${outputFolder}/pdf`;
 
-            log.info(`Downloaded PDF: ${pdfLink?.url} to ${outputPath}`);
-            // await pdfParser.loadPDF(outputPath);
-            const fileContent = await extractTextFromFile(outputPath);
-            console.log("file content", fileContent);
-            await pushData({ title:"pdfcontent", url: pdfLink?.url, pdf:fileContent });
-          }
+              await mkdir(outputFolder, { recursive: true });
+              await mkdir(pdfFolder, { recursive: true });
 
-          // Extract links from the current page
-          // and add them to the crawling queue.
-          const { processedRequests, unprocessedRequests } = await enqueueLinks(
-            {
-              globs:
-                typeof config.match === "string"
-                  ? [config.match]
-                  : config.match,
-              exclude: [
-                ...(typeof config.exclude === "string"
-                  ? [config.exclude]
-                  : config.exclude ?? []),
-                "**/*.pdf", // Exclude PDF files from being enqueued
-              ],
-              transformRequestFunction: (request) => {
-                if (request.url.endsWith(".pdf")) return false;
-                return request;
-              },
-            },
-          );
+              await Promise.all(
+                  pdfLinks.map(async (pdfLink) => {
+                    const outputPath = path.join(
+                        pdfFolder,
+                        path.basename(pdfLink?.url ?? ""),
+                    );
+                    await downloadPdf(pdfLink?.url ?? "", outputPath);
+                    log.info(`Downloaded PDF: ${pdfLink?.url} to ${outputPath}`);
+                    const fileContent = await extractTextFromFile(outputPath);
+                    await pushData({
+                      title: "pdfcontent",
+                      url: pdfLink?.url,
+                      pdf: fileContent,
+                    });
+                  }),
+              );
 
-          const totalProcessedRequests = processedRequests.length;
-          const filteredRequests = processedRequests.filter(
-            (req) => !req.wasAlreadyPresent,
-          );
-          const filteredCount = filteredRequests.length;
-          const uniqueKeys = filteredRequests.map((req) => req.uniqueKey);
+              const { processedRequests, unprocessedRequests } = await enqueueLinks(
+                  {
+                    globs:
+                        typeof config.match === "string"
+                            ? [config.match]
+                            : config.match,
+                    exclude: [
+                      ...(typeof config.exclude === "string"
+                          ? [config.exclude]
+                          : (config.exclude ?? [])),
+                      "**/*.pdf",
+                    ],
+                    transformRequestFunction: (request) => {
+                      if (request.url.endsWith(".pdf")) return false;
+                      return request;
+                    },
+                  },
+              );
 
-          log.info(`Total processed requests: ${totalProcessedRequests}`);
-          log.info(
-            `Filtered requests count (wasAlreadyPresent: false): ${filteredCount}`,
-          );
-          log.info(
-            `Unique keys of filtered requests: ${uniqueKeys.join(", ")}`,
-          );
-        },
-        // Comment this option to scrape the full website.
-        maxRequestsPerCrawl: config.maxPagesToCrawl,
-        // Uncomment this option to see the browser window.
-        // headless: false,
-        preNavigationHooks: [
-          // Abort requests for certain resource types
-          async ({ request, page, log }) => {
-            // Skip PDF URLs before navigation
-            if (request.url.endsWith(".pdf")) {
-              log.info("Skipping PDF URL before navigation: " + request.url);
-              return;
+              log.info(`Total processed requests: ${processedRequests.length}`);
+              log.info(
+                  `Filtered requests count (wasAlreadyPresent: false): ${processedRequests.filter(
+                      (req) => !req.wasAlreadyPresent,
+                  ).length}`,
+              );
+            } catch (error) {
+              log.error(`Error in requestHandler: ${error}`);
             }
-
-            // If there are no resource exclusions, return
-            const RESOURCE_EXCLUSTIONS = config.resourceExclusions ?? [];
-            if (RESOURCE_EXCLUSTIONS.length === 0) {
-              return;
-            }
-            if (config.cookie) {
-              const cookies = (
-                Array.isArray(config.cookie) ? config.cookie : [config.cookie]
-              ).map((cookie) => {
-                return {
-                  name: cookie.name,
-                  value: cookie.value,
-                  url: request.loadedUrl,
-                };
-              });
-              await page.context().addCookies(cookies);
-            }
-            await page.route(
-              `**\/*.{${RESOURCE_EXCLUSTIONS.join()}}`,
-              (route) => route.abort("aborted"),
-            );
-            log.info(
-              `Aborting requests for as this is a resource excluded route`,
-            );
           },
-        ],
-      },
-      new Configuration({
-        purgeOnStart: true,
-      }),
+          maxRequestsPerCrawl: config.maxPagesToCrawl,
+          preNavigationHooks: [
+            async ({ request, page, log }) => {
+              try {
+                if (request.url.endsWith(".pdf")) {
+                  log.info("Skipping PDF URL before navigation: " + request.url);
+                  return;
+                }
+
+                const RESOURCE_EXCLUSTIONS = config.resourceExclusions ?? [];
+                if (RESOURCE_EXCLUSTIONS.length === 0) {
+                  return;
+                }
+                if (config.cookie) {
+                  const cookies = (
+                      Array.isArray(config.cookie) ? config.cookie : [config.cookie]
+                  ).map((cookie) => {
+                    return {
+                      name: cookie.name,
+                      value: cookie.value,
+                      url: request.loadedUrl,
+                    };
+                  });
+                  await page.context().addCookies(cookies);
+                }
+                await page.route(
+                    `**\/*.{${RESOURCE_EXCLUSTIONS.join()}}`,
+                    (route) => route.abort("aborted"),
+                );
+                log.info(
+                    `Aborting requests for as this is a resource excluded route`,
+                );
+              } catch (error) {
+                log.error(`Error in preNavigationHooks: ${error}`);
+              }
+            },
+          ],
+        },
+        new Configuration({
+          purgeOnStart: true,
+        }),
     );
 
-    const isUrlASitemap = /sitemap.*\.xml$/.test(config.url);
-
-    if (isUrlASitemap) {
-      const listOfUrls = await downloadListOfUrls({ url: config.url });
-
-      // Add the initial URL to the crawling queue.
-      await crawler.addRequests(listOfUrls);
-
-      // Run the crawler
-      await crawler.run();
-    } else {
-      // Add first URL to the queue and start the crawl.
-      await crawler.run([config.url]);
+    try {
+      const isUrlASitemap = /sitemap.*\.xml$/.test(config.url);
+      if (isUrlASitemap) {
+        const listOfUrls = await downloadListOfUrls({ url: config.url });
+        await crawler.addRequests(listOfUrls);
+        await crawler.run();
+      } else {
+        await crawler.run([config.url]);
+      }
+    } catch (error) {
+      console.error(`Error in crawl function: ${error}`);
     }
   }
 }
 
 export async function write(config: Config) {
   let nextFileNameString: PathLike = "";
-  const jsonFiles = await glob("storage/datasets/default/*.json", {
-    absolute: true,
-  });
+  try {
+    const jsonFiles = await glob("storage/datasets/default/*.json", {
+      absolute: true,
+    });
 
-  console.log(`Found ${jsonFiles.length} files to combine...`);
+    console.log(`Found ${jsonFiles.length} files to combine...`);
 
-  let currentResults: Record<string, any>[] = [];
-  let currentSize: number = 0;
-  let fileCounter: number = 1; // Initialize a counter for serialized numbers
-  const maxBytes: number = config.maxFileSize
-    ? config.maxFileSize * 1024 * 1024
-    : Infinity;
+    let currentResults: Record<string, any>[] = [];
+    let currentSize: number = 0;
+    let fileCounter: number = 1;
+    const maxBytes: number = config.maxFileSize
+        ? config.maxFileSize * 1024 * 1024
+        : Infinity;
 
-  const getStringByteSize = (str: string): number =>
-    Buffer.byteLength(str, "utf-8");
+    const getStringByteSize = (str: string): number =>
+        Buffer.byteLength(str, "utf-8");
 
-  const nextFileName = (): string =>
-    `${config.outputFileName.replace(/\.json$/, "")}-${fileCounter}.json`;
+    const nextFileName = (): string =>
+        `${config.outputFileName.replace(/\.json$/, "")}-${fileCounter}.json`;
 
-  const writeBatchToFile = async (): Promise<void> => {
-    nextFileNameString = nextFileName();
-    await writeFile(
-      nextFileNameString,
-      JSON.stringify(currentResults, null, 2),
-    );
-    console.log(
-      `Wrote ${currentResults.length} items to ${nextFileNameString}`,
-    );
-    currentResults = [];
-    currentSize = 0;
-    fileCounter++;
-  };
+    const writeBatchToFile = async (): Promise<void> => {
+      nextFileNameString = nextFileName();
+      await writeFile(
+          nextFileNameString,
+          JSON.stringify(currentResults, null, 2),
+      );
+      console.log(
+          `Wrote ${currentResults.length} items to ${nextFileNameString}`,
+      );
+      currentResults = [];
+      currentSize = 0;
+      fileCounter++;
+    };
 
-  let estimatedTokens: number = 0;
+    let estimatedTokens: number = 0;
 
-  const addContentOrSplit = async (
-    data: Record<string, any>,
-  ): Promise<void> => {
-    const contentString: string = JSON.stringify(data);
-    const tokenCount: number | false = isWithinTokenLimit(
-      contentString,
-      config.maxTokens || Infinity,
-    );
+    const addContentOrSplit = async (
+        data: Record<string, any>,
+    ): Promise<void> => {
+      const contentString: string = JSON.stringify(data);
+      const tokenCount: number | false = isWithinTokenLimit(
+          contentString,
+          config.maxTokens || Infinity,
+      );
 
-    if (typeof tokenCount === "number") {
-      if (estimatedTokens + tokenCount > config.maxTokens!) {
-        // Only write the batch if it's not empty (something to write)
-        if (currentResults.length > 0) {
-          await writeBatchToFile();
+      if (typeof tokenCount === "number") {
+        if (estimatedTokens + tokenCount > config.maxTokens!) {
+          if (currentResults.length > 0) {
+            await writeBatchToFile();
+          }
+          estimatedTokens = Math.floor(tokenCount / 2);
+          currentResults.push(data);
+        } else {
+          currentResults.push(data);
+          estimatedTokens += tokenCount;
         }
-        // Since the addition of a single item exceeded the token limit, halve it.
-        estimatedTokens = Math.floor(tokenCount / 2);
-        currentResults.push(data);
-      } else {
-        currentResults.push(data);
-        estimatedTokens += tokenCount;
       }
+
+      currentSize += getStringByteSize(contentString);
+      if (currentSize > maxBytes) {
+        await writeBatchToFile();
+      }
+    };
+
+    for (const file of jsonFiles) {
+      const fileContent = await readFile(file, "utf-8");
+      const data: Record<string, any> = JSON.parse(fileContent);
+      await addContentOrSplit(data);
     }
 
-    currentSize += getStringByteSize(contentString);
-    if (currentSize > maxBytes) {
+    if (currentResults.length > 0) {
       await writeBatchToFile();
     }
-  };
-
-  // Iterate over each JSON file and process its contents.
-  for (const file of jsonFiles) {
-    const fileContent = await readFile(file, "utf-8");
-    const data: Record<string, any> = JSON.parse(fileContent);
-    await addContentOrSplit(data);
-  }
-
-  // Check if any remaining data needs to be written to a file.
-  if (currentResults.length > 0) {
-    await writeBatchToFile();
+  } catch (error) {
+    console.error(`Error in write function: ${error}`);
+    throw error;
   }
 
   return nextFileNameString;
@@ -392,82 +379,66 @@ class GPTCrawlerCore {
   }
 
   async write(): Promise<PathLike> {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const baseFolder = "web-crawled";
-        const outputFolder = `${baseFolder}/${
+    try {
+      const baseFolder = "web-crawled";
+      const outputFolder = `${baseFolder}/${
           this.config.name || "defaultFolder"
-        }`;
-        const jsonFolder = `${outputFolder}/json`;
+      }`;
+      const jsonFolder = `${outputFolder}/json`;
 
-        // Create output and json folders
-        await mkdir(outputFolder, { recursive: true });
-        await mkdir(jsonFolder, { recursive: true });
+      await mkdir(outputFolder, { recursive: true });
+      await mkdir(jsonFolder, { recursive: true });
 
-        // Read all JSON files from the default dataset folder
-        const datasetFolder = "storage/datasets/default";
-        const files = await readdir(datasetFolder);
+      const datasetFolder = "storage/datasets/default";
+      const files = await readdir(datasetFolder);
 
-        const combinedData = [];
+      const combinedData = [];
 
-        let fileCounter = 1; // Initialize a counter for serialized numbers
+      let fileCounter = 1;
 
-        for (const file of files) {
-          if (path.extname(file) === ".json") {
-            const filePath = path.join(datasetFolder, file);
-            const content = await readFile(filePath, "utf-8");
-            const data = JSON.parse(content);
+      for (const file of files) {
+        if (path.extname(file) === ".json") {
+          const filePath = path.join(datasetFolder, file);
+          const content = await readFile(filePath, "utf-8");
+          const data = JSON.parse(content);
 
-            // Create a safe filename from the URL
-            const safeFilename = this.createSafeFilename(data.url);
-            // Add serialized number to the filename
-            const jsonFileName = `${fileCounter
+          const safeFilename = this.createSafeFilename(data.url);
+          const jsonFileName = `${fileCounter
               .toString()
               .padStart(6, "0")}_${safeFilename}.json`;
-            const jsonFilePath = path.join(jsonFolder, jsonFileName);
+          const jsonFilePath = path.join(jsonFolder, jsonFileName);
 
-            // Write the individual JSON file
-            await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
-            console.log(`Wrote JSON content to ${jsonFilePath}`);
+          await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+          console.log(`Wrote JSON content to ${jsonFilePath}`);
 
-            // Add to combined data with filename and filetype
-            combinedData.push({
-              filename: jsonFileName,
-              filetype: "json",
-              data: data,
-            });
+          combinedData.push({
+            filename: jsonFileName,
+            filetype: "json",
+            data: data,
+          });
 
-            fileCounter++; // Increment the counter for the next file
-          }
+          fileCounter++;
         }
+      }
 
-        // Write the combined JSON file (without a serialized number)
-        const combinedFilePath = path.join(
-          outputFolder,
-          "combined_output.json",
-        );
-        await writeFile(
+      const combinedFilePath = path.join(outputFolder, "combined_output.json");
+      await writeFile(
           combinedFilePath,
           JSON.stringify(combinedData, null, 2),
-        );
-        console.log(`Wrote combined JSON to ${combinedFilePath}`);
+      );
+      console.log(`Wrote combined JSON to ${combinedFilePath}`);
 
-        resolve(combinedFilePath);
-      } catch (error) {
-        console.error(`Error in write method: ${error}`);
-        reject(error);
-      }
-    });
+      return combinedFilePath;
+    } catch (error) {
+      console.error(`Error in write method: ${error}`);
+      throw error;
+    }
   }
 
   private createSafeFilename(url: string): string {
-    // Remove protocol and www
     let filename = url.replace(/^(https?:\/\/)?(www\.)?/, "");
-    // Replace non-alphanumeric characters with underscores
     filename = filename.replace(/[^a-z0-9]/gi, "_").toLowerCase();
-    // Trim underscores from start and end
     filename = filename.replace(/^_+|_+$/g, "");
-    // Limit length
     return filename.slice(0, 100);
   }
 }
