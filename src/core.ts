@@ -130,6 +130,7 @@ export async function crawl(config: Config) {
           await pushData({ title, url: request.loadedUrl, html });
 
           if (config.onVisitPage) {
+            // @ts-ignore
             await config.onVisitPage({ page, pushData });
           }
 
@@ -196,6 +197,7 @@ export async function crawl(config: Config) {
             // await pdfParser.loadPDF(outputPath);
             const fileContent = await extractTextFromFile(outputPath);
             console.log("file content", fileContent);
+            await pushData({ title:"pdfcontent", url: pdfLink?.url, pdf:fileContent });
           }
 
           // Extract links from the current page
