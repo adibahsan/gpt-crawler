@@ -1,22 +1,21 @@
-import { Configuration, PlaywrightCrawler, downloadListOfUrls } from "crawlee";
-import { glob } from "glob";
-import { Config, configSchema } from "./config.js";
-import { Page } from "playwright";
-import { isWithinTokenLimit } from "gpt-tokenizer";
-import fs, { PathLike } from "fs";
-import { mkdir } from "fs/promises";
-import { readdir, readFile, writeFile } from "fs/promises";
+import {Configuration, downloadListOfUrls, PlaywrightCrawler} from "crawlee";
+import {glob} from "glob";
+import {Config, configSchema} from "./config.js";
+import {Page} from "playwright";
+import {isWithinTokenLimit} from "gpt-tokenizer";
+import fs, {PathLike} from "fs";
+import {mkdir, readdir, readFile, writeFile} from "fs/promises";
 import path from "path";
 import axios from "axios";
 import PDFParser from "pdf2json";
-import { parseOfficeAsync } from "officeparser";
+import {parseOfficeAsync} from "officeparser";
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
 
 const pdfParser = new PDFParser(this, true);
 pdfParser.on("pdfParser_dataError", (errData) =>
-    console.error(errData.parserError),
+  console.error(errData.parserError),
 );
 pdfParser.on("pdfParser_dataReady", (pdfData) => {
   console.log("pdfData", pdfData);
@@ -25,9 +24,8 @@ pdfParser.on("pdfParser_dataReady", (pdfData) => {
 async function extractTextFromFile(filePath: string) {
   try {
     const data = await parseOfficeAsync(filePath);
-    const output = data.toString();
-    console.log("output of PDF", output);
-    return output;
+    // console.log("output of PDF", output);
+    return data.toString();
   } catch (error) {
     console.error(`Error extracting text from file ${filePath}:`, error);
     throw error;
@@ -61,11 +59,11 @@ export function getPageHtml(page: Page, selector = "body") {
   return page.evaluate((selector) => {
     if (selector.startsWith("/")) {
       const elements = document.evaluate(
-          selector,
-          document,
-          null,
-          XPathResult.ANY_TYPE,
-          null,
+        selector,
+        document,
+        null,
+        XPathResult.ANY_TYPE,
+        null,
       );
       const result = elements.iterateNext();
       return result ? result.textContent || "" : "";
@@ -78,18 +76,18 @@ export function getPageHtml(page: Page, selector = "body") {
 
 export async function waitForXPath(page: Page, xpath: string, timeout: number) {
   await page.waitForFunction(
-      (xpath) => {
-        const elements = document.evaluate(
-            xpath,
-            document,
-            null,
-            XPathResult.ANY_TYPE,
-            null,
-        );
-        return elements.iterateNext() !== null;
-      },
-      xpath,
-      { timeout },
+    (xpath) => {
+      const elements = document.evaluate(
+        xpath,
+        document,
+        null,
+        XPathResult.ANY_TYPE,
+        null,
+      );
+      return elements.iterateNext() !== null;
+    },
+    xpath,
+    { timeout },
   );
 }
 
@@ -98,175 +96,177 @@ export async function crawl(config: Config) {
 
   if (process.env.NO_CRAWL !== "true") {
     crawler = new PlaywrightCrawler(
-        {
-          async requestHandler({ request, page, enqueueLinks, log, pushData }) {
+      {
+        async requestHandler({ request, page, enqueueLinks, log, pushData }) {
+          try {
+            if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
+              log.warning("Skipping PDF URL: " + request.loadedUrl);
+              return;
+            }
+
+            const title = await page.title();
+            pageCounter++;
+            log.info(
+              `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
+            );
+
+            let content = "";
+            if (config.selector) {
+              if (config.selector.startsWith("/")) {
+                await waitForXPath(
+                  page,
+                  config.selector,
+                  config.waitForSelectorTimeout ?? 1000,
+                );
+              } else {
+                await page.waitForSelector(config.selector, {
+                  timeout: config.waitForSelectorTimeout ?? 1000,
+                });
+              }
+            }
+            content = await getPageHtml(page, config.selector);
+            const html = await getPageHtml(page, config.selector);
+
+            await pushData({ title, url: request.loadedUrl, filetype: "html", content: html });
+
+            if (config.onVisitPage) {
+              // @ts-ignore
+              await config.onVisitPage({ page, pushData });
+            }
+
+            const links = await page.$$eval("a", (elements) =>
+              elements
+                .map((el) => {
+                  const href = el.href;
+                  if (!href) return null;
+                  const fileExtensions = [
+                    ".html",
+                    ".pdf",
+                    ".doc",
+                    ".docx",
+                    ".xls",
+                    ".xlsx",
+                    ".ppt",
+                    ".pptx",
+                    ".txt",
+                    ".csv",
+                  ];
+                  if (
+                    fileExtensions.some((ext) =>
+                      href.toLowerCase().endsWith(ext),
+                    ) ||
+                    !href.includes(".")
+                  ) {
+                    return {
+                      url: href,
+                      type: href.split(".").pop()?.toLowerCase() || "html",
+                    };
+                  }
+                  return null;
+                })
+                .filter((link) => link !== null),
+            );
+
+            const pdfLinks = links.filter((link) => link?.type === "pdf");
+
+            const baseFolder = "web-crawled";
+            const outputFolder = `${baseFolder}/${
+              config.name || "defaultFolder"
+            }`;
+            const pdfFolder = `${outputFolder}/pdf`;
+
+            await mkdir(outputFolder, { recursive: true });
+            await mkdir(pdfFolder, { recursive: true });
+
+            await Promise.all(
+              pdfLinks.map(async (pdfLink) => {
+                const outputPath = path.join(
+                  pdfFolder,
+                  path.basename(pdfLink?.url ?? ""),
+                );
+                await downloadPdf(pdfLink?.url ?? "", outputPath);
+                const pdfFileName = path.basename(pdfLink?.url ?? "");
+                log.info(`Downloaded PDF: ${pdfLink?.url} to with name ${pdfFileName} to -> ${outputPath}`);
+
+                const content = await extractTextFromFile(outputPath);
+                await pushData({
+                  title: pdfFileName,
+                  url: pdfLink?.url,
+                  filetype: "pdf",
+                  content,
+                });
+              }),
+            );
+
+            const { processedRequests, unprocessedRequests } =
+              await enqueueLinks({
+                globs:
+                  typeof config.match === "string"
+                    ? [config.match]
+                    : config.match,
+                exclude: [
+                  ...(typeof config.exclude === "string"
+                    ? [config.exclude]
+                    : (config.exclude ?? [])),
+                  "**/*.pdf",
+                ],
+                transformRequestFunction: (request) => {
+                  if (request.url.endsWith(".pdf")) return false;
+                  return request;
+                },
+              });
+
+            log.info(`Total processed requests: ${processedRequests.length}`);
+            log.info(
+              `Filtered requests count (wasAlreadyPresent: false): ${
+                processedRequests.filter((req) => !req.wasAlreadyPresent).length
+              }`,
+            );
+          } catch (error) {
+            log.error(`Error in requestHandler: ${error}`);
+          }
+        },
+        maxRequestsPerCrawl: config.maxPagesToCrawl,
+        preNavigationHooks: [
+          async ({ request, page, log }) => {
             try {
-              if (request.loadedUrl && request.loadedUrl.endsWith(".pdf")) {
-                log.warning("Skipping PDF URL: " + request.loadedUrl);
+              if (request.url.endsWith(".pdf")) {
+                log.info("Skipping PDF URL before navigation: " + request.url);
                 return;
               }
 
-              const title = await page.title();
-              pageCounter++;
-              log.info(
-                  `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
-              );
-
-              let content = "";
-              if (config.selector) {
-                if (config.selector.startsWith("/")) {
-                  await waitForXPath(
-                      page,
-                      config.selector,
-                      config.waitForSelectorTimeout ?? 1000,
-                  );
-                } else {
-                  await page.waitForSelector(config.selector, {
-                    timeout: config.waitForSelectorTimeout ?? 1000,
-                  });
-                }
+              const RESOURCE_EXCLUSTIONS = config.resourceExclusions ?? [];
+              if (RESOURCE_EXCLUSTIONS.length === 0) {
+                return;
               }
-              content = await getPageHtml(page, config.selector);
-              const html = await getPageHtml(page, config.selector);
-
-              await pushData({ title, url: request.loadedUrl, html });
-
-              if (config.onVisitPage) {
-                // @ts-ignore
-                await config.onVisitPage({ page, pushData });
+              if (config.cookie) {
+                const cookies = (
+                  Array.isArray(config.cookie) ? config.cookie : [config.cookie]
+                ).map((cookie) => {
+                  return {
+                    name: cookie.name,
+                    value: cookie.value,
+                    url: request.loadedUrl,
+                  };
+                });
+                await page.context().addCookies(cookies);
               }
-
-              const links = await page.$$eval("a", (elements) =>
-                  elements
-                      .map((el) => {
-                        const href = el.href;
-                        if (!href) return null;
-                        const fileExtensions = [
-                          ".html",
-                          ".pdf",
-                          ".doc",
-                          ".docx",
-                          ".xls",
-                          ".xlsx",
-                          ".ppt",
-                          ".pptx",
-                          ".txt",
-                          ".csv",
-                        ];
-                        if (
-                            fileExtensions.some((ext) =>
-                                href.toLowerCase().endsWith(ext),
-                            ) ||
-                            !href.includes(".")
-                        ) {
-                          return {
-                            url: href,
-                            type: href.split(".").pop()?.toLowerCase() || "html",
-                          };
-                        }
-                        return null;
-                      })
-                      .filter((link) => link !== null),
+              await page.route(
+                `**\/*.{${RESOURCE_EXCLUSTIONS.join()}}`,
+                (route) => route.abort("aborted"),
               );
-
-              const pdfLinks = links.filter((link) => link?.type === "pdf");
-
-              const baseFolder = "web-crawled";
-              const outputFolder = `${baseFolder}/${
-                  config.name || "defaultFolder"
-              }`;
-              const pdfFolder = `${outputFolder}/pdf`;
-
-              await mkdir(outputFolder, { recursive: true });
-              await mkdir(pdfFolder, { recursive: true });
-
-              await Promise.all(
-                  pdfLinks.map(async (pdfLink) => {
-                    const outputPath = path.join(
-                        pdfFolder,
-                        path.basename(pdfLink?.url ?? ""),
-                    );
-                    await downloadPdf(pdfLink?.url ?? "", outputPath);
-                    log.info(`Downloaded PDF: ${pdfLink?.url} to ${outputPath}`);
-                    const fileContent = await extractTextFromFile(outputPath);
-                    await pushData({
-                      title: "pdfcontent",
-                      url: pdfLink?.url,
-                      pdf: fileContent,
-                    });
-                  }),
-              );
-
-              const { processedRequests, unprocessedRequests } = await enqueueLinks(
-                  {
-                    globs:
-                        typeof config.match === "string"
-                            ? [config.match]
-                            : config.match,
-                    exclude: [
-                      ...(typeof config.exclude === "string"
-                          ? [config.exclude]
-                          : (config.exclude ?? [])),
-                      "**/*.pdf",
-                    ],
-                    transformRequestFunction: (request) => {
-                      if (request.url.endsWith(".pdf")) return false;
-                      return request;
-                    },
-                  },
-              );
-
-              log.info(`Total processed requests: ${processedRequests.length}`);
               log.info(
-                  `Filtered requests count (wasAlreadyPresent: false): ${processedRequests.filter(
-                      (req) => !req.wasAlreadyPresent,
-                  ).length}`,
+                `Aborting requests for as this is a resource excluded route`,
               );
             } catch (error) {
-              log.error(`Error in requestHandler: ${error}`);
+              log.error(`Error in preNavigationHooks: ${error}`);
             }
           },
-          maxRequestsPerCrawl: config.maxPagesToCrawl,
-          preNavigationHooks: [
-            async ({ request, page, log }) => {
-              try {
-                if (request.url.endsWith(".pdf")) {
-                  log.info("Skipping PDF URL before navigation: " + request.url);
-                  return;
-                }
-
-                const RESOURCE_EXCLUSTIONS = config.resourceExclusions ?? [];
-                if (RESOURCE_EXCLUSTIONS.length === 0) {
-                  return;
-                }
-                if (config.cookie) {
-                  const cookies = (
-                      Array.isArray(config.cookie) ? config.cookie : [config.cookie]
-                  ).map((cookie) => {
-                    return {
-                      name: cookie.name,
-                      value: cookie.value,
-                      url: request.loadedUrl,
-                    };
-                  });
-                  await page.context().addCookies(cookies);
-                }
-                await page.route(
-                    `**\/*.{${RESOURCE_EXCLUSTIONS.join()}}`,
-                    (route) => route.abort("aborted"),
-                );
-                log.info(
-                    `Aborting requests for as this is a resource excluded route`,
-                );
-              } catch (error) {
-                log.error(`Error in preNavigationHooks: ${error}`);
-              }
-            },
-          ],
-        },
-        new Configuration({
-          purgeOnStart: true,
-        }),
+        ],
+      },
+      new Configuration({
+        purgeOnStart: true,
+      }),
     );
 
     try {
@@ -297,23 +297,23 @@ export async function write(config: Config) {
     let currentSize: number = 0;
     let fileCounter: number = 1;
     const maxBytes: number = config.maxFileSize
-        ? config.maxFileSize * 1024 * 1024
-        : Infinity;
+      ? config.maxFileSize * 1024 * 1024
+      : Infinity;
 
     const getStringByteSize = (str: string): number =>
-        Buffer.byteLength(str, "utf-8");
+      Buffer.byteLength(str, "utf-8");
 
     const nextFileName = (): string =>
-        `${config.outputFileName.replace(/\.json$/, "")}-${fileCounter}.json`;
+      `${config.outputFileName.replace(/\.json$/, "")}-${fileCounter}.json`;
 
     const writeBatchToFile = async (): Promise<void> => {
       nextFileNameString = nextFileName();
       await writeFile(
-          nextFileNameString,
-          JSON.stringify(currentResults, null, 2),
+        nextFileNameString,
+        JSON.stringify(currentResults, null, 2),
       );
       console.log(
-          `Wrote ${currentResults.length} items to ${nextFileNameString}`,
+        `Wrote ${currentResults.length} items to ${nextFileNameString}`,
       );
       currentResults = [];
       currentSize = 0;
@@ -323,12 +323,12 @@ export async function write(config: Config) {
     let estimatedTokens: number = 0;
 
     const addContentOrSplit = async (
-        data: Record<string, any>,
+      data: Record<string, any>,
     ): Promise<void> => {
       const contentString: string = JSON.stringify(data);
       const tokenCount: number | false = isWithinTokenLimit(
-          contentString,
-          config.maxTokens || Infinity,
+        contentString,
+        config.maxTokens || Infinity,
       );
 
       if (typeof tokenCount === "number") {
@@ -382,7 +382,7 @@ class GPTCrawlerCore {
     try {
       const baseFolder = "web-crawled";
       const outputFolder = `${baseFolder}/${
-          this.config.name || "defaultFolder"
+        this.config.name || "defaultFolder"
       }`;
       const jsonFolder = `${outputFolder}/json`;
 
@@ -404,8 +404,8 @@ class GPTCrawlerCore {
 
           const safeFilename = this.createSafeFilename(data.url);
           const jsonFileName = `${fileCounter
-              .toString()
-              .padStart(6, "0")}_${safeFilename}.json`;
+            .toString()
+            .padStart(6, "0")}_${safeFilename}.json`;
           const jsonFilePath = path.join(jsonFolder, jsonFileName);
 
           await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
@@ -413,7 +413,7 @@ class GPTCrawlerCore {
 
           combinedData.push({
             filename: jsonFileName,
-            filetype: "json",
+            // filetype: "json",
             data: data,
           });
 
@@ -422,10 +422,7 @@ class GPTCrawlerCore {
       }
 
       const combinedFilePath = path.join(outputFolder, "combined_output.json");
-      await writeFile(
-          combinedFilePath,
-          JSON.stringify(combinedData, null, 2),
-      );
+      await writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2));
       console.log(`Wrote combined JSON to ${combinedFilePath}`);
 
       return combinedFilePath;
