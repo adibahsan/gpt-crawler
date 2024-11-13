@@ -119,6 +119,71 @@ async function downloadAndProcessPdfs(links: { url: string; type: string }[], co
     );
 }
 
+async function extractAndProcessHtmlContent(page: Page, config: Config, log: any, pushData: any, requestUrl: string) {
+    const title = await page.title();
+    pageCounter++;
+    log.info(
+        `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${requestUrl}...`,
+    );
+
+    if (config.selector) {
+        if (config.selector.startsWith("/")) {
+            await waitForXPath(
+                page,
+                config.selector,
+                config.waitForSelectorTimeout ?? 1000,
+            );
+        } else {
+            await page.waitForSelector(config.selector, {
+                timeout: config.waitForSelectorTimeout ?? 1000,
+            });
+        }
+    }
+    const html = await getPageHtml(page, config.selector);
+
+    await pushData({
+        title,
+        url: requestUrl,
+        filetype: "html",
+        content: html,
+    });
+}
+
+async function getPageLinks(page: Page) {
+    return await page.$$eval("a", (elements) =>
+        elements
+            .map((el) => {
+                const href = el.href;
+                if (!href) return null;
+                const fileExtensions = [
+                    ".html",
+                    ".pdf",
+                    ".doc",
+                    ".docx",
+                    ".xls",
+                    ".xlsx",
+                    ".ppt",
+                    ".pptx",
+                    ".txt",
+                    ".csv",
+                ];
+                if (
+                    fileExtensions.some((ext) =>
+                        href.toLowerCase().endsWith(ext),
+                    ) ||
+                    !href.includes(".")
+                ) {
+                    return {
+                        url: href,
+                        type: href.split(".").pop()?.toLowerCase() || "html",
+                    };
+                }
+                return null;
+            })
+            .filter((link) => link !== null),
+    );
+}
+
 export async function crawl(config: Config) {
     configSchema.parse(config);
 
@@ -132,73 +197,14 @@ export async function crawl(config: Config) {
                             return;
                         }
 
-                        const title = await page.title();
-                        pageCounter++;
-                        log.info(
-                            `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${request.loadedUrl}...`,
-                        );
-
-                        let content = "";
-                        if (config.selector) {
-                            if (config.selector.startsWith("/")) {
-                                await waitForXPath(
-                                    page,
-                                    config.selector,
-                                    config.waitForSelectorTimeout ?? 1000,
-                                );
-                            } else {
-                                await page.waitForSelector(config.selector, {
-                                    timeout: config.waitForSelectorTimeout ?? 1000,
-                                });
-                            }
-                        }
-                        content = await getPageHtml(page, config.selector);
-                        const html = await getPageHtml(page, config.selector);
-
-                        await pushData({
-                            title,
-                            url: request.loadedUrl,
-                            filetype: "html",
-                            content: html,
-                        });
+                        await extractAndProcessHtmlContent(page, config, log, pushData, request.loadedUrl);
 
                         if (config.onVisitPage) {
                             // @ts-ignore
                             await config.onVisitPage({page, pushData});
                         }
 
-                        const links = await page.$$eval("a", (elements) =>
-                            elements
-                                .map((el) => {
-                                    const href = el.href;
-                                    if (!href) return null;
-                                    const fileExtensions = [
-                                        ".html",
-                                        ".pdf",
-                                        ".doc",
-                                        ".docx",
-                                        ".xls",
-                                        ".xlsx",
-                                        ".ppt",
-                                        ".pptx",
-                                        ".txt",
-                                        ".csv",
-                                    ];
-                                    if (
-                                        fileExtensions.some((ext) =>
-                                            href.toLowerCase().endsWith(ext),
-                                        ) ||
-                                        !href.includes(".")
-                                    ) {
-                                        return {
-                                            url: href,
-                                            type: href.split(".").pop()?.toLowerCase() || "html",
-                                        };
-                                    }
-                                    return null;
-                                })
-                                .filter((link) => link !== null),
-                        );
+                        const links = await getPageLinks(page);
 
                         await downloadAndProcessPdfs(links, config, log, pushData);
 
