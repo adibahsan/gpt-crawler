@@ -99,6 +99,7 @@ async function downloadAndProcessPdfs(
   config: Config,
   log: any,
   pushData: any,
+  requestUrl: string
 ) {
   const pdfLinks = links.filter((link) => link?.type === "pdf");
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
@@ -117,7 +118,7 @@ async function downloadAndProcessPdfs(
         await downloadPdf(pdfLink?.url ?? "", outputPath);
         const pdfFileName = path.basename(pdfLink?.url ?? "");
         log.info(
-          `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} to -> ${outputPath}`,
+          `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
         );
 
         const content = await extractTextFromFile(outputPath);
@@ -125,6 +126,7 @@ async function downloadAndProcessPdfs(
         await pushData({
           title: pdfFileName,
           counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+          sourceUrl: requestUrl,
           url: pdfLink?.url,
           filetype: FileFormat.Pdf,
           status: CrawlStatus.Crawled,
@@ -251,7 +253,7 @@ export async function crawl(config: Config) {
 
             const links = await getPageLinks(page);
 
-            await downloadAndProcessPdfs(links, config, log, pushData);
+            await downloadAndProcessPdfs(links, config, log, pushData, request.loadedUrl);
 
             const { processedRequests, unprocessedRequests } =
               await enqueueLinks({
@@ -435,7 +437,10 @@ class GPTCrawlerCore {
 
   async write(): Promise<PathLike> {
     try {
-      const outputFolder = path.join(baseFolder, this.config.name || "defaultFolder");
+      const outputFolder = path.join(
+        baseFolder,
+        this.config.name || "defaultFolder",
+      );
       const jsonFolder = path.join(outputFolder, "json");
       const logFolder = path.join(outputFolder, "logs");
 
