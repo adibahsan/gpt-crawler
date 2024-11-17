@@ -9,7 +9,9 @@ import path from "path";
 import axios from "axios";
 import PDFParser from "pdf2json";
 import { parseOfficeAsync } from "officeparser";
-import {CrawlStatus, FileFormat} from "./util.js";
+import { CrawlStatus, FileFormat } from "./util/util.js";
+import {countToken} from "./util/file.utils.js";
+
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
@@ -33,6 +35,8 @@ async function extractTextFromFile(filePath: string) {
     throw error;
   }
 }
+
+
 
 async function downloadPdf(url: string, outputPath: string) {
   try {
@@ -94,14 +98,12 @@ export async function waitForXPath(page: Page, xpath: string, timeout: number) {
 }
 
 async function downloadAndProcessPdfs(
-    links: { url: string; type: string }[],
-    config: Config,
-    log: any,
-    pushData: any,
+  links: { url: string; type: string }[],
+  config: Config,
+  log: any,
+  pushData: any,
 ) {
   const pdfLinks = links.filter((link) => link?.type === "pdf");
-
-  const baseFolder = "web-crawled";
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
   const pdfFolder = `${outputFolder}/pdf`;
 
@@ -109,42 +111,44 @@ async function downloadAndProcessPdfs(
   await mkdir(pdfFolder, { recursive: true });
 
   await Promise.all(
-      pdfLinks.map(async (pdfLink) => {
-        const outputPath = path.join(
-            pdfFolder,
-            path.basename(pdfLink?.url ?? ""),
+    pdfLinks.map(async (pdfLink) => {
+      const outputPath = path.join(
+        pdfFolder,
+        path.basename(pdfLink?.url ?? ""),
+      );
+      try {
+        await downloadPdf(pdfLink?.url ?? "", outputPath);
+        const pdfFileName = path.basename(pdfLink?.url ?? "");
+        log.info(
+          `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} to -> ${outputPath}`,
         );
-        try {
-          await downloadPdf(pdfLink?.url ?? "", outputPath);
-          const pdfFileName = path.basename(pdfLink?.url ?? "");
-          log.info(
-              `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} to -> ${outputPath}`,
-          );
 
-          const content = await extractTextFromFile(outputPath);
-          await pushData({
-            title: pdfFileName,
-            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-            url: pdfLink?.url,
-            filetype: FileFormat.Pdf,
-            status: CrawlStatus.Crawled,
-            datetime: new Date().toISOString(),
-            text: content
-          });
+        const content = await extractTextFromFile(outputPath);
+        const tokenCount =  countToken(content);
+        await pushData({
+          title: pdfFileName,
+          counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+          url: pdfLink?.url,
+          filetype: FileFormat.Pdf,
+          status: CrawlStatus.Crawled,
+          datetime: new Date().toISOString(),
+          tokenCount,
+          text: content,
+        });
 
-          // await updateCrawlLog(pdfLink?.url ?? "", "crawled", config);
-        } catch (error) {
-          log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
-          await pushData({
-            url: pdfLink?.url,
-            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-            filetype: FileFormat.Pdf,
-            status: CrawlStatus.Failed,
-            datetime: new Date().toISOString()
-          });
-          // await updateCrawlLog(pdfLink?.url ?? "", "failed", config);
-        }
-      }),
+        // await updateCrawlLog(pdfLink?.url ?? "", "crawled", config);
+      } catch (error) {
+        log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
+        await pushData({
+          url: pdfLink?.url,
+          counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+          filetype: FileFormat.Pdf,
+          status: CrawlStatus.Failed,
+          datetime: new Date().toISOString(),
+        });
+        // await updateCrawlLog(pdfLink?.url ?? "", "failed", config);
+      }
+    }),
   );
 }
 async function extractAndProcessHtmlContent(
@@ -182,11 +186,10 @@ async function extractAndProcessHtmlContent(
     filetype: FileFormat.Html,
     status: CrawlStatus.Crawled,
     datetime: new Date().toISOString(),
-    content: html
-
+    tokenCount: countToken(html),
+    content: html,
   });
   // await updateCrawlLog(requestUrl, "crawled", config);
-
 }
 
 async function getPageLinks(page: Page) {
