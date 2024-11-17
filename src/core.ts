@@ -10,8 +10,7 @@ import axios from "axios";
 import PDFParser from "pdf2json";
 import { parseOfficeAsync } from "officeparser";
 import { CrawlStatus, FileFormat } from "./util/util.js";
-import {countToken} from "./util/file.utils.js";
-
+import { countToken } from "./util/file.utils.js";
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
@@ -35,8 +34,6 @@ async function extractTextFromFile(filePath: string) {
     throw error;
   }
 }
-
-
 
 async function downloadPdf(url: string, outputPath: string) {
   try {
@@ -124,7 +121,7 @@ async function downloadAndProcessPdfs(
         );
 
         const content = await extractTextFromFile(outputPath);
-        const tokenCount =  countToken(content);
+        const tokenCount = countToken(content);
         await pushData({
           title: pdfFileName,
           counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
@@ -438,21 +435,25 @@ class GPTCrawlerCore {
 
   async write(): Promise<PathLike> {
     try {
-      const baseFolder = "web-crawled";
-      const outputFolder = `${baseFolder}/${
-        this.config.name || "defaultFolder"
-      }`;
-      const jsonFolder = `${outputFolder}/json`;
+      const outputFolder = path.join(baseFolder, this.config.name || "defaultFolder");
+      const jsonFolder = path.join(outputFolder, "json");
+      const logFolder = path.join(outputFolder, "logs");
 
-      await mkdir(outputFolder, { recursive: true });
-      await mkdir(jsonFolder, { recursive: true });
+      await Promise.all([
+        mkdir(outputFolder, { recursive: true }),
+        mkdir(jsonFolder, { recursive: true }),
+        mkdir(logFolder, { recursive: true }),
+      ]);
 
       const datasetFolder = "storage/datasets/default";
       const files = await readdir(datasetFolder);
 
       const combinedData = [];
-
       let fileCounter = 1;
+      let htmlCounter = 0;
+      let pdfCounter = 0;
+      const crawledUrls: string[] = [];
+      const failedUrls: string[] = [];
 
       for (const file of files) {
         if (path.extname(file) === ".json") {
@@ -460,36 +461,49 @@ class GPTCrawlerCore {
           const content = await readFile(filePath, "utf-8");
           const data = JSON.parse(content);
 
+          if (data?.status === CrawlStatus.Crawled) {
+            crawledUrls.push(data?.url);
+            if (data?.filetype === FileFormat.Html) {
+              htmlCounter++;
+            } else if (data?.filetype === FileFormat.Pdf) {
+              pdfCounter++;
+            }
+          } else {
+            failedUrls.push(data?.url);
+          }
+
           const safeFilename = this.createSafeFilename(data.url);
-          const jsonFileName = `${fileCounter
-            .toString()
-            .padStart(6, "0")}_${safeFilename}.json`;
+          const jsonFileName = `${fileCounter.toString().padStart(6, "0")}_${safeFilename}.json`;
           const jsonFilePath = path.join(jsonFolder, jsonFileName);
 
           await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
-          console.log(`Wrote JSON content to ${jsonFilePath}`);
-
-          combinedData.push({
-            filename: jsonFileName,
-            // filetype: "json",
-            data: data,
-          });
+          combinedData.push({ filename: jsonFileName, data });
 
           fileCounter++;
         }
       }
 
       const combinedFilePath = path.join(outputFolder, "combined_output.json");
-      await writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2));
-      console.log(`Wrote combined JSON to ${combinedFilePath}`);
+      const crawlMapFilePath = path.join(logFolder, "crawl_map.json");
+      const crawlMapData = {
+        crawledUrls,
+        failedUrls,
+        totalPdf: pdfCounter,
+        totalHtml: htmlCounter,
+      };
 
-      return combinedFilePath;
+      await Promise.all([
+        writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2)),
+        writeFile(crawlMapFilePath, JSON.stringify(crawlMapData, null, 2)),
+      ]);
+
+      console.log(`Wrote combined JSON to ${combinedFilePath}`);
+      return crawlMapFilePath;
     } catch (error) {
-      console.error(`Error in write method: ${error}`);
+      console.error(`Error in write method:`, error);
       throw error;
     }
   }
-
   private createSafeFilename(url: string): string {
     let filename = url.replace(/^(https?:\/\/)?(www\.)?/, "");
     filename = filename.replace(/[^a-z0-9]/gi, "_").toLowerCase();
