@@ -9,9 +9,11 @@ import path from "path";
 import axios from "axios";
 import PDFParser from "pdf2json";
 import { parseOfficeAsync } from "officeparser";
+import {CrawlStatus, FileFormat} from "./util.js";
 
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
+const baseFolder = "web-crawled";
 
 const pdfParser = new PDFParser(this, true);
 pdfParser.on("pdfParser_dataError", (errData) =>
@@ -92,10 +94,10 @@ export async function waitForXPath(page: Page, xpath: string, timeout: number) {
 }
 
 async function downloadAndProcessPdfs(
-  links: { url: string; type: string }[],
-  config: Config,
-  log: any,
-  pushData: any,
+    links: { url: string; type: string }[],
+    config: Config,
+    log: any,
+    pushData: any,
 ) {
   const pdfLinks = links.filter((link) => link?.type === "pdf");
 
@@ -107,28 +109,44 @@ async function downloadAndProcessPdfs(
   await mkdir(pdfFolder, { recursive: true });
 
   await Promise.all(
-    pdfLinks.map(async (pdfLink) => {
-      const outputPath = path.join(
-        pdfFolder,
-        path.basename(pdfLink?.url ?? ""),
-      );
-      await downloadPdf(pdfLink?.url ?? "", outputPath);
-      const pdfFileName = path.basename(pdfLink?.url ?? "");
-      log.info(
-        `Downloaded PDF: ${pdfLink?.url} to with name ${pdfFileName} to -> ${outputPath}`,
-      );
+      pdfLinks.map(async (pdfLink) => {
+        const outputPath = path.join(
+            pdfFolder,
+            path.basename(pdfLink?.url ?? ""),
+        );
+        try {
+          await downloadPdf(pdfLink?.url ?? "", outputPath);
+          const pdfFileName = path.basename(pdfLink?.url ?? "");
+          log.info(
+              `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} to -> ${outputPath}`,
+          );
 
-      const content = await extractTextFromFile(outputPath);
-      await pushData({
-        title: pdfFileName,
-        url: pdfLink?.url,
-        filetype: "pdf",
-        content,
-      });
-    }),
+          const content = await extractTextFromFile(outputPath);
+          await pushData({
+            title: pdfFileName,
+            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            url: pdfLink?.url,
+            filetype: FileFormat.Pdf,
+            status: CrawlStatus.Crawled,
+            datetime: new Date().toISOString(),
+            text: content
+          });
+
+          // await updateCrawlLog(pdfLink?.url ?? "", "crawled", config);
+        } catch (error) {
+          log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
+          await pushData({
+            url: pdfLink?.url,
+            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            filetype: FileFormat.Pdf,
+            status: CrawlStatus.Failed,
+            datetime: new Date().toISOString()
+          });
+          // await updateCrawlLog(pdfLink?.url ?? "", "failed", config);
+        }
+      }),
   );
 }
-
 async function extractAndProcessHtmlContent(
   page: Page,
   config: Config,
@@ -159,10 +177,16 @@ async function extractAndProcessHtmlContent(
 
   await pushData({
     title,
+    counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
     url: requestUrl,
-    filetype: "html",
-    content: html,
+    filetype: FileFormat.Html,
+    status: CrawlStatus.Crawled,
+    datetime: new Date().toISOString(),
+    content: html
+
   });
+  // await updateCrawlLog(requestUrl, "crawled", config);
+
 }
 
 async function getPageLinks(page: Page) {
