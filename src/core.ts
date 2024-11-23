@@ -12,6 +12,20 @@ import { parseOfficeAsync } from "officeparser";
 import { CrawlStatus, FileFormat } from "./util/util.js";
 import { countToken } from "./util/file.utils.js";
 
+import { rm } from "fs/promises";
+
+async function prepareOutputFolder(outputFolder: string) {
+  try {
+    await rm(outputFolder, { recursive: true, force: true });
+    await mkdir(outputFolder, { recursive: true });
+    console.log("Removing & RE-creating output folders ",outputFolder)
+  } catch (error) {
+    console.error(`Error preparing output folder: ${error}`);
+    throw error;
+  }
+}
+
+// Usage
 let pageCounter = 0;
 let crawler: PlaywrightCrawler;
 const baseFolder = "web-crawled";
@@ -99,7 +113,7 @@ async function downloadAndProcessPdfs(
   config: Config,
   log: any,
   pushData: any,
-  requestUrl: string
+  requestUrl: string,
 ) {
   const pdfLinks = links.filter((link) => link?.type === "pdf");
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
@@ -227,6 +241,10 @@ async function getPageLinks(page: Page) {
 export async function crawl(config: Config) {
   configSchema.parse(config);
   pageCounter = 0;
+  const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
+
+  await prepareOutputFolder(outputFolder);
+
 
   if (process.env.NO_CRAWL !== "true") {
     crawler = new PlaywrightCrawler(
@@ -253,7 +271,13 @@ export async function crawl(config: Config) {
 
             const links = await getPageLinks(page);
 
-            await downloadAndProcessPdfs(links, config, log, pushData, request.loadedUrl);
+            await downloadAndProcessPdfs(
+              links,
+              config,
+              log,
+              pushData,
+              request.loadedUrl,
+            );
 
             const { processedRequests, unprocessedRequests } =
               await enqueueLinks({
