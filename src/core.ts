@@ -1,24 +1,22 @@
-import { Configuration, downloadListOfUrls, PlaywrightCrawler } from "crawlee";
-import { glob } from "glob";
-import { Config, configSchema } from "./config.js";
-import { Page } from "playwright";
-import { isWithinTokenLimit } from "gpt-tokenizer";
-import fs, { PathLike } from "fs";
-import { mkdir, readdir, readFile, writeFile } from "fs/promises";
+import {Configuration, downloadListOfUrls, PlaywrightCrawler} from "crawlee";
+import {glob} from "glob";
+import {Config, configSchema} from "./config.js";
+import {Page} from "playwright";
+import {isWithinTokenLimit} from "gpt-tokenizer";
+import fs, {PathLike} from "fs";
+import {mkdir, readdir, readFile, rm, writeFile} from "fs/promises";
 import path from "path";
 import axios from "axios";
 import PDFParser from "pdf2json";
-import { parseOfficeAsync } from "officeparser";
-import { CrawlStatus, FileFormat } from "./util/util.js";
-import { countToken } from "./util/file.utils.js";
-
-import { rm } from "fs/promises";
+import {parseOfficeAsync} from "officeparser";
+import {CrawlStatus, FileFormat} from "./util/util.js";
+import {countToken} from "./util/file.utils.js";
 
 async function prepareOutputFolder(outputFolder: string) {
   try {
     await rm(outputFolder, { recursive: true, force: true });
     await mkdir(outputFolder, { recursive: true });
-    console.log("Removing & RE-creating output folders ",outputFolder)
+    console.log("Removing & RE-creating output folders ", outputFolder);
   } catch (error) {
     console.error(`Error preparing output folder: ${error}`);
     throw error;
@@ -45,7 +43,8 @@ async function extractTextFromFile(filePath: string) {
     return data.toString();
   } catch (error) {
     console.error(`Error extracting text from file ${filePath}:`, error);
-    throw error;
+    return ""; // Return an empty string or handle the error as needed
+
   }
 }
 
@@ -109,11 +108,11 @@ export async function waitForXPath(page: Page, xpath: string, timeout: number) {
 }
 
 async function downloadAndProcessPdfs(
-  links: { url: string; type: string }[],
-  config: Config,
-  log: any,
-  pushData: any,
-  requestUrl: string,
+    links: { url: string; type: string }[],
+    config: Config,
+    log: any,
+    pushData: any,
+    requestUrl: string,
 ) {
   const pdfLinks = links.filter((link) => link?.type === "pdf");
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
@@ -123,47 +122,46 @@ async function downloadAndProcessPdfs(
   await mkdir(pdfFolder, { recursive: true });
 
   await Promise.all(
-    pdfLinks.map(async (pdfLink) => {
-      const outputPath = path.join(
-        pdfFolder,
-        path.basename(pdfLink?.url ?? ""),
-      );
-      try {
-        await downloadPdf(pdfLink?.url ?? "", outputPath);
-        const pdfFileName = path.basename(pdfLink?.url ?? "");
-        log.info(
-          `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
+      pdfLinks.map(async (pdfLink) => {
+        const outputPath = path.join(
+            pdfFolder,
+            path.basename(pdfLink?.url ?? ""),
         );
+        try {
+          await downloadPdf(pdfLink?.url ?? "", outputPath);
+          const pdfFileName = path.basename(pdfLink?.url ?? "");
+          log.info(
+              `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
+          );
 
-        const content = await extractTextFromFile(outputPath);
-        const tokenCount = countToken(content);
-        await pushData({
-          title: pdfFileName,
-          counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-          sourceUrl: requestUrl,
-          url: pdfLink?.url,
-          filetype: FileFormat.Pdf,
-          status: CrawlStatus.Crawled,
-          datetime: new Date().toISOString(),
-          tokenCount,
-          text: content,
-        });
+          const content = await extractTextFromFile(outputPath);
+          const tokenCount = countToken(content);
+          await pushData({
+            title: pdfFileName,
+            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            sourceUrl: requestUrl,
+            url: pdfLink?.url,
+            filetype: FileFormat.Pdf,
+            status: content !== "" ? CrawlStatus.Crawled : CrawlStatus.Failed,
+            datetime: new Date().toISOString(),
+            tokenCount,
+            text: content,
+          });
 
-        // await updateCrawlLog(pdfLink?.url ?? "", "crawled", config);
-      } catch (error) {
-        log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
-        await pushData({
-          url: pdfLink?.url,
-          counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-          filetype: FileFormat.Pdf,
-          status: CrawlStatus.Failed,
-          datetime: new Date().toISOString(),
-        });
-        // await updateCrawlLog(pdfLink?.url ?? "", "failed", config);
-      }
-    }),
+        } catch (error) {
+          log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
+          await pushData({
+            url: pdfLink?.url,
+            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            filetype: FileFormat.Pdf,
+            status: CrawlStatus.Failed,
+            datetime: new Date().toISOString(),
+          });
+        }
+      }),
   );
 }
+
 async function extractAndProcessHtmlContent(
   page: Page,
   config: Config,
@@ -244,7 +242,6 @@ export async function crawl(config: Config) {
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
 
   await prepareOutputFolder(outputFolder);
-
 
   if (process.env.NO_CRAWL !== "true") {
     crawler = new PlaywrightCrawler(
