@@ -26,29 +26,124 @@ const doc = {
       },
       url: {
         type: "string",
-        example: "https://example.com",
-        description: "Starting URL for crawling",
+        example: "https://www.builder.io/c/docs/developers",
+        description: "URL to start the crawl, if url is a sitemap, it will crawl all pages in the sitemap",
       },
       match: {
+        oneOf: [
+          {
+            type: "string",
+            example: "https://www.builder.io/c/docs/**",
+          },
+          {
+            type: "array",
+            items: {
+              type: "string",
+            },
+            example: ["https://www.builder.io/c/docs/**", "https://www.builder.io/blog/**"],
+          },
+        ],
+        description: "Pattern to match against for links on a page to subsequently crawl",
+      },
+      exclude: {
+        oneOf: [
+          {
+            type: "string",
+            example: "https://www.builder.io/private/**",
+          },
+          {
+            type: "array",
+            items: {
+              type: "string",
+            },
+            example: ["https://www.builder.io/private/**", "https://www.builder.io/internal/**"],
+          },
+        ],
+        description: "Pattern to match against for links on a page to exclude from crawling",
+        required: false,
+      },
+      selector: {
         type: "string",
-        example: "https://example.com/**",
-        description: "URL pattern to match for crawling. Can be string or array of strings",
+        example: ".docs-builder-container",
+        description: "Selector to grab the inner text from",
+        required: false,
       },
       maxPagesToCrawl: {
         type: "integer",
-        example: 10,
+        example: 50,
         description: "Maximum number of pages to crawl",
+        minimum: 1,
       },
       outputFileName: {
         type: "string",
         example: "output.json",
-        description: "Optional: Name of the output file",
+        description: "File name for the finished data",
+        required: false,
+      },
+      cookie: {
+        oneOf: [
+          {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              value: { type: "string" },
+            },
+            required: ["name", "value"],
+          },
+          {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                value: { type: "string" },
+              },
+              required: ["name", "value"],
+            },
+          },
+        ],
+        example: {
+          name: "cookieConsent",
+          value: "true",
+        },
+        description: "Optional cookie to be set. E.g. for Cookie Consent",
+        required: false,
+      },
+      waitForSelectorTimeout: {
+        type: "integer",
+        example: 1000,
+        description: "Optional timeout for waiting for a selector to appear",
+        minimum: 0,
+        required: false,
+      },
+      resourceExclusions: {
+        type: "array",
+        items: {
+          type: "string",
+        },
+        example: ["png", "jpg", "jpeg", "gif", "css", "js"],
+        description: "Optional resources to exclude from crawling",
+        required: false,
+      },
+      maxFileSize: {
+        type: "integer",
+        example: 1,
+        description: "Optional maximum file size in megabytes to include in the output file",
+        minimum: 1,
+        required: false,
+      },
+      maxTokens: {
+        type: "integer",
+        example: 5000,
+        description: "Optional maximum number tokens to include in the output file",
+        minimum: 1,
         required: false,
       },
       uploadToGCP: {
         type: "boolean",
-        example: true,
-        description: "Optional: Whether to upload results to GCP",
+        example: false,
+        description: "Whether to upload the crawl results to GCP",
+        default: false,
         required: false,
       },
       cleanupAfterUpload: {
