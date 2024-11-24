@@ -472,12 +472,16 @@ class GPTCrawlerCore {
 
     async write(): Promise<PathLike> {
         try {
-            const outputFolder = path.join(
-                baseFolder,
-                this.config.name || "defaultFolder",
-            );
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const crawlId = `crawl-${timestamp}`;
+
+
+            const outputFolder = path.join(baseFolder, this.config.name || "defaultFolder");
             const jsonFolder = path.join(outputFolder, "json");
+            const pdfFolder = path.join(outputFolder, "pdf");
             const logFolder = path.join(outputFolder, "logs");
+            const crawlMapFilePath = path.join(logFolder, "crawl_map.json");
 
             await Promise.all([
                 mkdir(outputFolder, {recursive: true}),
@@ -524,7 +528,7 @@ class GPTCrawlerCore {
             }
 
             const combinedFilePath = path.join(outputFolder, "combined_output.json");
-            const crawlMapFilePath = path.join(logFolder, "crawl_map.json");
+
             const crawlMapData = {
                 crawledUrls,
                 failedUrls,
@@ -540,41 +544,84 @@ class GPTCrawlerCore {
 
             // Upload to GCS if configured
         if (process.env.GCP_BUCKET_NAME) {
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          const bucketName = process.env.GCP_BUCKET_NAME;
+            const storage = new Storage({
+                keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+            });
+            const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
 
-          // Upload combined output
-          const combinedGcsPath = await uploadToGCS(
-              bucketName,
-              `crawls/${this.config.name}/${timestamp}/combined_output.json`,
-              combinedFilePath
-          );
+            // Create a folder structure in GCS
+            const gcsBasePath = `${this.config.name}/${crawlId}`;
 
-          // Upload crawl map
-          const mapGcsPath = await uploadToGCS(
-              bucketName,
-              `crawls/${this.config.name}/${timestamp}/crawl_map.json`,
-              crawlMapFilePath
-          );
+            console.log(`\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`);
 
-          // // Optionally upload individual JSON files
-          // const individualUploads = await Promise.allSettled(
-          //     combinedData.map(async ({ filename, data }) => {
-          //
-          //         const individualPath = path.join(jsonFolder, filename);
-          //         return uploadToGCS(
-          //             bucketName,
-          //             `crawls/${this.config.name}/${timestamp}/individual/${filename}`,
-          //             individualPath
-          //         );
-          //     })
-          // );
+            // Upload combined output to root
+            await bucket.upload(combinedFilePath, {
+                destination: `${gcsBasePath}/combined_output.json`,
+                metadata: {
+                    contentType: 'application/json',
+                },
+            });
+            console.log('✅ Uploaded combined output');
 
-          // Log upload results
-          console.log('Uploads completed: to GCP ');
-          console.log(`Combined output: to GCP  ${combinedGcsPath}`);
-          console.log(`Crawl map: to GCP  ${mapGcsPath}`);
-          // console.log(`Individual files: ${individualUploads.filter(r => r.status === 'fulfilled').length} succeeded, ${individualUploads.filter(r => r.status === 'rejected').length} failed`);
+            // Upload crawl map to logs directory
+            await bucket.upload(crawlMapFilePath, {
+                destination: `${gcsBasePath}/logs/crawl_map.json`,
+                metadata: {
+                    contentType: 'application/json',
+                },
+            });
+            console.log('✅ Uploaded crawl map to logs directory');
+
+            // Upload JSON files to json directory
+            const jsonFiles = await glob(`${jsonFolder}/*.json`);
+            if (jsonFiles.length > 0) {
+                console.log(`\nUploading ${jsonFiles.length} JSON files...`);
+                await Promise.all(
+                    jsonFiles.map(async (filePath) => {
+                        const fileName = path.basename(filePath);
+                        await bucket.upload(filePath, {
+                            destination: `${gcsBasePath}/json/${fileName}`,
+                            metadata: {
+                                contentType: 'application/json',
+                            },
+                        });
+                    })
+                );
+                console.log('✅ Uploaded all JSON files');
+            }
+
+            // Upload PDF files to pdf directory
+            const pdfFiles = await glob(`${pdfFolder}/*.pdf`);
+            if (pdfFiles.length > 0) {
+                console.log(`\nUploading ${pdfFiles.length} PDF files...`);
+                await Promise.all(
+                    pdfFiles.map(async (filePath) => {
+                        const fileName = path.basename(filePath);
+                        await bucket.upload(filePath, {
+                            destination: `${gcsBasePath}/pdf/${fileName}`,
+                            metadata: {
+                                contentType: 'application/pdf',
+                            },
+                        });
+                    })
+                );
+                console.log('✅ Uploaded all PDF files');
+            }
+
+            // Log upload summary
+            console.log('\nUpload Summary:');
+            console.log(`- Combined output: ${gcsBasePath}/combined_output.json`);
+            console.log(`- Crawl map: ${gcsBasePath}/logs/crawl_map.json`);
+            console.log(`- JSON files: ${jsonFiles.length}`);
+            console.log(`- PDF files: ${pdfFiles.length}`);
+
+            // // Optionally clean up local files
+            // if (this.config.cleanupAfterUpload) {
+            //     await rm(outputFolder, { recursive: true, force: true });
+            //     console.log('\n🧹 Cleaned up local files');
+            // }
+
+            // return `gs://${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`;
         }
 
             console.log(`Wrote combined JSON to ${combinedFilePath}`);
