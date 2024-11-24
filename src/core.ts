@@ -116,51 +116,92 @@ async function downloadAndProcessPdfs(
   pushData: any,
   requestUrl: string,
 ) {
-  const pdfLinks = links.filter((link) => link?.type === "pdf");
-  const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
-  const pdfFolder = `${outputFolder}/pdf`;
+  try {
+    // Filter PDF links that match the config patterns
+    const pdfLinks = links.filter((link): link is { url: string; type: string } => {
+      if (link?.type !== "pdf") return false;
 
-  await mkdir(outputFolder, { recursive: true });
-  await mkdir(pdfFolder, { recursive: true });
+      // Apply the same matching rules as HTML pages
+      const matchPatterns = Array.isArray(config.match) ? config.match : [config.match];
+      const excludePatterns = Array.isArray(config.exclude) ? config.exclude : config.exclude ? [config.exclude] : [];
 
-  await Promise.all(
-    pdfLinks.map(async (pdfLink) => {
-      const outputPath = path.join(
-        pdfFolder,
-        path.basename(pdfLink?.url ?? ""),
+      // Check if URL matches any of the include patterns
+      const isMatched = matchPatterns.some(pattern =>
+        new RegExp(pattern.replace(/\*/g, '.*')).test(link.url)
       );
-      try {
-        await downloadPdf(pdfLink?.url ?? "", outputPath);
-        const pdfFileName = path.basename(pdfLink?.url ?? "");
-        log.info(
-          `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
-        );
 
-        const content = await extractTextFromFile(outputPath);
-        const tokenCount = countToken(content);
-        await pushData({
-          title: pdfFileName,
-          counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-          sourceUrl: requestUrl,
-          url: pdfLink?.url,
-          filetype: FileFormat.Pdf,
-          status: content !== "" ? CrawlStatus.Crawled : CrawlStatus.Failed,
-          datetime: new Date().toISOString(),
-          tokenCount,
-          text: content,
-        });
-      } catch (error) {
-        log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
-        await pushData({
-          url: pdfLink?.url,
-          counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-          filetype: FileFormat.Pdf,
-          status: CrawlStatus.Failed,
-          datetime: new Date().toISOString(),
-        });
-      }
-    }),
-  );
+      // Check if URL matches any of the exclude patterns
+      const isExcluded = excludePatterns.some(pattern =>
+        new RegExp(pattern.replace(/\*/g, '.*')).test(link.url)
+      );
+
+      return isMatched && !isExcluded;
+    });
+
+    if (pdfLinks.length === 0) {
+      return;
+    }
+
+    const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
+    const pdfFolder = `${outputFolder}/pdf`;
+
+    await mkdir(outputFolder, { recursive: true });
+    await mkdir(pdfFolder, { recursive: true });
+
+    log.info(`Found ${pdfLinks.length} matching PDF links to process from ${requestUrl} using patterns ${config.match} and excluding ${config.exclude}`);
+
+    await Promise.all(
+      pdfLinks.map(async (pdfLink) => {
+        const outputPath = path.join(
+          pdfFolder,
+          path.basename(pdfLink?.url ?? ""),
+        );
+        try {
+          await downloadPdf(pdfLink?.url ?? "", outputPath);
+          const pdfFileName = path.basename(pdfLink?.url ?? "");
+          log.info(
+            `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
+          );
+
+          const content = await extractTextFromFile(outputPath);
+          const tokenCount = countToken(content);
+          await pushData({
+            title: pdfFileName,
+            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            sourceUrl: requestUrl,
+            url: pdfLink?.url,
+            filetype: FileFormat.Pdf,
+            status: content !== "" ? CrawlStatus.Crawled : CrawlStatus.Failed,
+            datetime: new Date().toISOString(),
+            tokenCount,
+            text: content,
+          });
+        } catch (error) {
+          log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
+          await pushData({
+            title: path.basename(pdfLink?.url ?? ""),
+            url: pdfLink?.url,
+            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            sourceUrl: requestUrl,
+            filetype: FileFormat.Pdf,
+            status: CrawlStatus.Failed,
+            datetime: new Date().toISOString(),
+            error: `${error}`
+          });
+        }
+      }),
+    );
+  } catch (error) {
+    log.error(`Critical error in downloadAndProcessPdfs for ${requestUrl}:`, error);
+    await pushData({
+      url: requestUrl,
+      counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+      filetype: FileFormat.Pdf,
+      status: CrawlStatus.Failed,
+      datetime: new Date().toISOString(),
+      error: `${error}`
+    });
+  }
 }
 
 async function extractAndProcessHtmlContent(
@@ -673,7 +714,7 @@ class GPTCrawlerCore {
               });
             }),
           );
-          console.log("✅ Uploaded all PDF files");
+          console.log("��� Uploaded all PDF files");
         }
 
         // Log upload summary
