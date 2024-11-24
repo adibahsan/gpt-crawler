@@ -12,6 +12,10 @@ import {parseOfficeAsync} from "officeparser";
 import {CrawlStatus, FileFormat} from "./util/util.js";
 import {countToken} from "./util/file.utils.js";
 import {exec} from "child_process";
+import { Storage } from '@google-cloud/storage';
+
+
+
 
 async function prepareOutputFolder(outputFolder: string) {
     try {
@@ -533,6 +537,46 @@ class GPTCrawlerCore {
                 writeFile(crawlMapFilePath, JSON.stringify(crawlMapData, null, 2)),
             ]);
 
+
+            // Upload to GCS if configured
+        if (process.env.GCP_BUCKET_NAME) {
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const bucketName = process.env.GCP_BUCKET_NAME;
+
+          // Upload combined output
+          const combinedGcsPath = await uploadToGCS(
+              bucketName,
+              `crawls/${this.config.name}/${timestamp}/combined_output.json`,
+              combinedFilePath
+          );
+
+          // Upload crawl map
+          const mapGcsPath = await uploadToGCS(
+              bucketName,
+              `crawls/${this.config.name}/${timestamp}/crawl_map.json`,
+              crawlMapFilePath
+          );
+
+          // // Optionally upload individual JSON files
+          // const individualUploads = await Promise.allSettled(
+          //     combinedData.map(async ({ filename, data }) => {
+          //
+          //         const individualPath = path.join(jsonFolder, filename);
+          //         return uploadToGCS(
+          //             bucketName,
+          //             `crawls/${this.config.name}/${timestamp}/individual/${filename}`,
+          //             individualPath
+          //         );
+          //     })
+          // );
+
+          // Log upload results
+          console.log('Uploads completed: to GCP ');
+          console.log(`Combined output: to GCP  ${combinedGcsPath}`);
+          console.log(`Crawl map: to GCP  ${mapGcsPath}`);
+          // console.log(`Individual files: ${individualUploads.filter(r => r.status === 'fulfilled').length} succeeded, ${individualUploads.filter(r => r.status === 'rejected').length} failed`);
+        }
+
             console.log(`Wrote combined JSON to ${combinedFilePath}`);
             return crawlMapFilePath;
         } catch (error) {
@@ -547,6 +591,38 @@ class GPTCrawlerCore {
         filename = filename.replace(/^_+|_+$/g, "");
         return filename.slice(0, 100);
     }
+}
+
+async function uploadToGCS(
+  bucketName: string,
+  fileName: string,
+  filePath: string
+) {
+  try {
+    const storage = new Storage({
+      keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    });
+    const bucket = storage.bucket(bucketName);
+
+    // Upload file to GCP
+    await bucket.upload(filePath, {
+      destination: fileName,
+      metadata: {
+        contentType: 'application/json',
+        cacheControl: 'public, max-age=31536000',
+      },
+    });
+
+    console.log(`${fileName} uploaded to ${bucketName}`);
+
+    // Optionally make the file public
+    // await bucket.file(fileName).makePublic();
+
+    return `gs://${bucketName}/${fileName}`;
+  } catch (error) {
+    console.error(`Error uploading to GCS: ${error}`);
+    throw error;
+  }
 }
 
 export default GPTCrawlerCore;
