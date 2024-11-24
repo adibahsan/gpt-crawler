@@ -618,36 +618,62 @@ class GPTCrawlerCore {
       let pdfCounter = 0;
       const crawledUrls: string[] = [];
       const failedUrls: string[] = [];
+      const formattedData = [];
+
 
       for (const file of files) {
-        if (path.extname(file) === ".json") {
-          const filePath = path.join(datasetFolder, file);
-          const content = await readFile(filePath, "utf-8");
-          const data = JSON.parse(content);
+                if (path.extname(file) === ".json") {
+                    const filePath = path.join(datasetFolder, file);
+                    const content = await readFile(filePath, "utf-8");
+                    const data = JSON.parse(content);
 
-          if (data?.status === CrawlStatus.Crawled) {
-            crawledUrls.push(data?.url);
-            if (data?.filetype === FileFormat.Html) {
-              htmlCounter++;
-            } else if (data?.filetype === FileFormat.Pdf) {
-              pdfCounter++;
+                    // Create safe filename without extension
+                    const safeFilename = this.createSafeFilename(data.url).replace(/\.json$/, '');
+
+                    // Format the data according to the new structure
+                    const formattedItem = {
+                        serial: fileCounter,
+                        url: data.url,
+                        title: data.title,
+                        fileName: safeFilename,
+                        fileType: data.filetype?.toLowerCase() || 'html',
+                        jsonPath: path.join(
+                            './datasets',
+                            this.config.name,
+                            'json',
+                            `${safeFilename}.json`
+                        ).replace(/\\/g, '/'),  // Convert Windows paths to forward slashes
+                        pdfPath: data.filetype?.toLowerCase() === "pdf" ? path.join(
+                            './datasets',
+                            this.config.name,
+                            'pdf',
+                            `${data.title ?? "unnamed"}`
+                        ).replace(/\\/g, '/') : null,
+                        tokenCount: data.tokenCount || 0,
+                        text: data?.content || data?.text || ''
+                    };
+
+                    formattedData.push(formattedItem);
+
+                    // Write individual JSON file
+                    const jsonFileName = `${safeFilename}.json`;
+                    const jsonFilePath = path.join(jsonFolder, jsonFileName);
+                    await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+
+                    if (data?.status === CrawlStatus.Crawled) {
+                        crawledUrls.push(data?.url);
+                        if (data?.filetype === FileFormat.Html) {
+                            htmlCounter++;
+                        } else if (data?.filetype === FileFormat.Pdf) {
+                            pdfCounter++;
+                        }
+                    } else {
+                        failedUrls.push(data?.url);
+                    }
+
+                    fileCounter++;
+                }
             }
-          } else {
-            failedUrls.push(data?.url);
-          }
-
-          const safeFilename = this.createSafeFilename(data.url);
-          const jsonFileName = `${fileCounter
-            .toString()
-            .padStart(6, "0")}_${safeFilename}.json`;
-          const jsonFilePath = path.join(jsonFolder, jsonFileName);
-
-          await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
-          combinedData.push({ filename: jsonFileName, data });
-
-          fileCounter++;
-        }
-      }
 
       // const combinedFilePath = path.join(outputFolder, "combined_output.json");
 
@@ -659,7 +685,7 @@ class GPTCrawlerCore {
       };
 
       await Promise.all([
-        writeFile(crawlMapFile, JSON.stringify(combinedData, null, 2)),
+        writeFile(crawlMapFile, JSON.stringify(formattedData, null, 2)),
         writeFile(crawlLogFile, JSON.stringify(crawlMapData, null, 2)),
       ]);
 
