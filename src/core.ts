@@ -345,18 +345,32 @@ export async function crawl(config: Config) {
               await config.onVisitPage({ page, pushData });
             }
 
-            const links = await getPageLinks(page);
+            try {
+              const links = await getPageLinks(page);
+              const validLinks = links.filter(
+                (link): link is { url: string; type: string } => link !== null,
+              );
 
-            const validLinks = links.filter(
-              (link): link is { url: string; type: string } => link !== null,
-            );
-            await downloadAndProcessPdfs(
-              validLinks,
-              config,
-              log,
-              pushData,
-              loadedUrl,
-            );
+              if (validLinks.length > 0) {
+                try {
+                  await downloadAndProcessPdfs(
+                    validLinks,
+                    config,
+                    log,
+                    pushData,
+                    loadedUrl,
+                  );
+                } catch (pdfError) {
+                  log.error(`Error processing PDFs from ${loadedUrl}: - ${pdfError}`);
+                  // Continue with crawling despite PDF processing error
+                }
+              } else {
+                log.info(`No valid links found to process from ${loadedUrl}`);
+              }
+            } catch (linkError) {
+              log.error(`Error extracting links from ${loadedUrl}:`, {error});
+              // Continue with crawling despite link extraction error
+            }
 
             const { processedRequests, unprocessedRequests } =
               await enqueueLinks({
@@ -714,7 +728,7 @@ class GPTCrawlerCore {
               });
             }),
           );
-          console.log("��� Uploaded all PDF files");
+          console.log(" Uploaded all PDF files");
         }
 
         // Log upload summary
