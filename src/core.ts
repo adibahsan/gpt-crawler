@@ -13,6 +13,7 @@ import { CrawlStatus, FileFormat } from "./util/util.js";
 import { countToken } from "./util/file.utils.js";
 import { exec } from "child_process";
 import { Storage } from "@google-cloud/storage";
+import { error } from "console";
 
 async function prepareOutputFolder(outputFolder: string) {
   try {
@@ -169,38 +170,74 @@ async function extractAndProcessHtmlContent(
   pushData: any,
   requestUrl: string,
 ) {
-  const title = await page.title();
-  pageCounter++;
-  log.info(
-    `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${requestUrl}...`,
-  );
+  try {
+    const title = await page.title();
+    pageCounter++;
+    log.info(
+      `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${requestUrl}...`,
+    );
 
-  if (config.selector) {
-    if (config.selector.startsWith("/")) {
-      await waitForXPath(
-        page,
-        config.selector,
-        config.waitForSelectorTimeout ?? 1000,
-      );
-    } else {
-      await page.waitForSelector(config.selector, {
-        timeout: config.waitForSelectorTimeout ?? 1000,
-      });
+    let html = '';
+    let extractionError = null;
+
+    try {
+      if (config.selector) {
+        if (config.selector.startsWith("/")) {
+          await waitForXPath(
+            page,
+            config.selector,
+            config.waitForSelectorTimeout ?? 1000,
+          );
+        } else {
+          await page.waitForSelector(config.selector, {
+            timeout: config.waitForSelectorTimeout ?? 1000,
+          });
+        }
+      }
+      html = await getPageHtml(page, config.selector);
+    } catch (error) {
+      extractionError = error;
+      log.error(`Error extracting HTML from ${requestUrl}: ${error}`);
+      // Continue execution to log the failure
     }
-  }
-  const html = await getPageHtml(page, config.selector);
 
-  await pushData({
-    title,
-    counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
-    url: requestUrl,
-    filetype: FileFormat.Html,
-    status: CrawlStatus.Crawled,
-    datetime: new Date().toISOString(),
-    tokenCount: countToken(html),
-    content: html,
-  });
-  // await updateCrawlLog(requestUrl, "crawled", config);
+    await pushData({
+      title,
+      counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+      url: requestUrl,
+      filetype: FileFormat.Html,
+      status: extractionError ? CrawlStatus.Failed : CrawlStatus.Crawled,
+      datetime: new Date().toISOString(),
+      tokenCount: extractionError ? 0 : countToken(html),
+      content: extractionError ? '' : html,
+      error: extractionError ?? undefined
+    });
+
+    if (extractionError) {
+      log.error(`Failed to process ${requestUrl}:`, error);
+    } else {
+      log.info(`Successfully processed ${requestUrl}`);
+    }
+
+  } catch (error) {
+    // Handle any errors in the main function
+    log.error(`Critical error processing ${requestUrl}:`, {
+      error,
+      selector: config.selector
+    });
+
+    await pushData({
+      title: 'Error',
+      counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+      url: requestUrl,
+      filetype: FileFormat.Html,
+      status: CrawlStatus.Failed,
+      datetime: new Date().toISOString(),
+      tokenCount: 0,
+      content: '',
+      error
+    });
+  }
 }
 
 async function getPageLinks(page: Page) {
@@ -305,7 +342,20 @@ export async function crawl(config: Config) {
               }`,
             );
           } catch (error) {
-            log.error(`Error in requestHandler: ${error}`);
+            log.error(`Error in requestHandler: ${error} - URL -${request.loadedUrl}`);
+            await pushData({
+              title: 'Error',
+              counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+              url: request.loadedUrl,
+              filetype: FileFormat.Html,
+              status: CrawlStatus.Failed,
+              datetime: new Date().toISOString(),
+              tokenCount: 0,
+              content: '',
+              error
+            });
+
+
           }
         },
         maxRequestsPerCrawl: config.maxPagesToCrawl,
