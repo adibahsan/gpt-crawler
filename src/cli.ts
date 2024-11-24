@@ -32,12 +32,14 @@ async function handler(options: Config) {
     const maxPagesToCrawl = parseInt(maxPagesToCrawlStr, 10);
 
     let config: Config = {
+      cleanupAfterUpload: false,
+      uploadToGCP: false,
       name,
       url,
       match,
       selector,
       maxPagesToCrawl,
-      outputFileName,
+      outputFileName
     };
 
     if (!config.url || !config.match || !config.selector) {

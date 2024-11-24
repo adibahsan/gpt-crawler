@@ -87,6 +87,18 @@ export const configSchema = z.object({
    * @example 5000
    */
   maxTokens: z.number().int().positive().optional(),
+
+  /**
+   * Whether to upload the crawl results to GCP
+   * @default false
+   */
+  uploadToGCP: z.boolean().optional().default(false),
+
+  /**
+   * Whether to clean up local files after GCP upload
+   * @default false
+   */
+  cleanupAfterUpload: z.boolean().optional().default(false)
 });
 
 export type Config = z.infer<typeof configSchema>;
