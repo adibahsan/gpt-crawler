@@ -344,7 +344,7 @@ export async function crawl(config: Config) {
           } catch (error) {
             log.error(`Error in requestHandler: ${error} - URL -${request.loadedUrl}`);
             await pushData({
-              title: 'Error',
+              title: "",
               counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
               url: request.loadedUrl,
               filetype: FileFormat.Html,
@@ -352,7 +352,7 @@ export async function crawl(config: Config) {
               datetime: new Date().toISOString(),
               tokenCount: 0,
               content: '',
-              error
+              error: `${error}`
             });
 
 
@@ -545,7 +545,8 @@ class GPTCrawlerCore {
       const jsonFolder = path.join(outputFolder, "json");
       const pdfFolder = path.join(outputFolder, "pdf");
       const logFolder = path.join(outputFolder, "logs");
-      const crawlMapFilePath = path.join(logFolder, "crawl_map.json");
+      const crawlLogFile = path.join(logFolder, "crawl.log.json");
+      const crawlMapFile = path.join(logFolder, "crawl.map.json");
 
       await Promise.all([
         mkdir(outputFolder, { recursive: true }),
@@ -593,7 +594,7 @@ class GPTCrawlerCore {
         }
       }
 
-      const combinedFilePath = path.join(outputFolder, "combined_output.json");
+      // const combinedFilePath = path.join(outputFolder, "combined_output.json");
 
       const crawlMapData = {
         crawledUrls,
@@ -603,8 +604,8 @@ class GPTCrawlerCore {
       };
 
       await Promise.all([
-        writeFile(combinedFilePath, JSON.stringify(combinedData, null, 2)),
-        writeFile(crawlMapFilePath, JSON.stringify(crawlMapData, null, 2)),
+        writeFile(crawlMapFile, JSON.stringify(combinedData, null, 2)),
+        writeFile(crawlLogFile, JSON.stringify(crawlMapData, null, 2)),
       ]);
 
       // Upload to GCS if configured
@@ -615,15 +616,15 @@ class GPTCrawlerCore {
         const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
 
         // Create a folder structure in GCS
-        const gcsBasePath = `${this.config.name}/${crawlId}`;
+        const gcsBasePath = `${crawlId}/${this.config.name}`;
 
         console.log(
           `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`,
         );
 
         // Upload combined output to root
-        await bucket.upload(combinedFilePath, {
-          destination: `${gcsBasePath}/combined_output.json`,
+        await bucket.upload(crawlMapFile, {
+          destination: `${gcsBasePath}/logs/crawl.map.json`,
           metadata: {
             contentType: "application/json",
           },
@@ -631,8 +632,8 @@ class GPTCrawlerCore {
         console.log("✅ Uploaded combined output");
 
         // Upload crawl map to logs directory
-        await bucket.upload(crawlMapFilePath, {
-          destination: `${gcsBasePath}/logs/crawl_map.json`,
+        await bucket.upload(crawlLogFile, {
+          destination: `${gcsBasePath}/logs/crawl.log.json`,
           metadata: {
             contentType: "application/json",
           },
@@ -677,7 +678,7 @@ class GPTCrawlerCore {
 
         // Log upload summary
         console.log("\nUpload Summary:");
-        console.log(`- Combined output: ${gcsBasePath}/combined_output.json`);
+        console.log(`- Combined output: ${gcsBasePath}/logs/crawl.map.json`);
         console.log(`- Crawl map: ${gcsBasePath}/logs/crawl_map.json`);
         console.log(`- JSON files: ${jsonFiles.length}`);
         console.log(`- PDF files: ${pdfFiles.length}`);
@@ -691,8 +692,8 @@ class GPTCrawlerCore {
         // return `gs://${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`;
       }
 
-      console.log(`Wrote combined JSON to ${combinedFilePath}`);
-      return crawlMapFilePath;
+      console.log(`Wrote combined JSON to ${crawlMapFile}`);
+      return crawlLogFile;
     } catch (error) {
       console.error(`Error in write method:`, error);
       throw error;
