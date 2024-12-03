@@ -10,7 +10,7 @@ import axios from "axios";
 import PDFParser from "pdf2json";
 import { parseOfficeAsync } from "officeparser";
 import { CrawlStatus, FileFormat } from "./util/util.js";
-import { countToken } from "./util/file.utils.js";
+import { countToken, getPdfContent } from "./util/file.utils.js";
 import { exec } from "child_process";
 import { Storage } from "@google-cloud/storage";
 import { error } from "console";
@@ -157,13 +157,21 @@ async function downloadAndProcessPdfs(
           path.basename(pdfLink?.url ?? ""),
         );
         try {
-          await downloadPdf(pdfLink?.url ?? "", outputPath);
+          // await downloadPdf(pdfLink?.url ?? "", outputPath);
           const pdfFileName = path.basename(pdfLink?.url ?? "");
+
+          let pdfContent = await getPdfContent(pdfLink?.url ?? "");
+          log.info("pdfContent after getPdfContent", pdfContent?.fileName, pdfContent?.title, pdfContent?.text);
+          if (pdfContent?.rawData) {
+            await writeFile(outputPath, pdfContent.rawData);
+            log.info("PDF saved using raw data to:", outputPath);
+        }
+
           log.info(
             `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
           );
 
-          const content = await extractTextFromFile(outputPath);
+          const content = pdfContent?.text ?? await extractTextFromFile(outputPath);
           const tokenCount = countToken(content);
           await pushData({
             title: pdfFileName,
