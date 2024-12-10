@@ -220,6 +220,26 @@ async function extractAndProcessHtmlContent(
   requestUrl: string,
 ) {
   try {
+    // Check if URL matches the patterns
+    const matchPatterns = Array.isArray(config.match) ? config.match : [config.match];
+    const excludePatterns = Array.isArray(config.exclude) ? config.exclude : config.exclude ? [config.exclude] : [];
+
+    // Check if URL matches any of the include patterns
+    const isMatched = matchPatterns.some(pattern =>
+      new RegExp(pattern.replace(/\*/g, '.*')).test(requestUrl)
+    );
+
+    // Check if URL matches any of the exclude patterns
+    const isExcluded = excludePatterns.some(pattern =>
+      new RegExp(pattern.replace(/\*/g, '.*')).test(requestUrl)
+    );
+
+    // Skip if URL doesn't match patterns or is excluded
+    if (!isMatched || isExcluded) {
+      log.info(`Skipping ${requestUrl} - Does not match patterns or is excluded`);
+      return;
+    }
+
     const title = await page.title();
     pageCounter++;
     log.info(
