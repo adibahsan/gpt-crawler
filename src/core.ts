@@ -110,6 +110,26 @@ export async function waitForXPath(page: Page, xpath: string, timeout: number) {
   );
 }
 
+async function createSafeFilename(url: string): Promise<string> {
+  // Remove protocol and www
+  let filename = url.replace(/(^\w+:|^)\/\//, '').replace(/^www\./, '');
+  // Replace all non-alphanumeric characters with underscore
+  filename = filename.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  // Remove trailing underscores
+  filename = filename.replace(/_+$/, '');
+  // Limit filename length
+  return filename.slice(0, 200);
+}
+
+async function checkIfFileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function downloadAndProcessPdfs(
   links: { url: string; type: string }[],
   config: Config,
@@ -153,9 +173,11 @@ async function downloadAndProcessPdfs(
 
     const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
     const pdfFolder = `${outputFolder}/pdf`;
+    const jsonFolder = `${outputFolder}/json`;
 
     await mkdir(outputFolder, { recursive: true });
     await mkdir(pdfFolder, { recursive: true });
+    await mkdir(jsonFolder, { recursive: true });
 
     log.info(
       `Found ${pdfLinks.length} matching PDF links to process from ${requestUrl} using patterns ${config.match} and excluding ${config.exclude}`,
@@ -163,29 +185,34 @@ async function downloadAndProcessPdfs(
 
     await Promise.all(
       pdfLinks.map(async (pdfLink) => {
-        const outputPath = path.join(
-          pdfFolder,
-          path.basename(pdfLink?.url ?? ""),
-        );
         try {
-          // await downloadPdf(pdfLink?.url ?? "", outputPath);
-          const pdfFileName = path.basename(pdfLink?.url ?? "");
+          const safeFilename = await createSafeFilename(pdfLink.url);
+          const outputPath = path.join(pdfFolder, `${safeFilename}.pdf`);
+          const jsonPath = path.join(jsonFolder, `${safeFilename}.json`);
 
-          let pdfContent = await getPdfContent(pdfLink?.url ?? "");
+          // Skip if both PDF and JSON already exist
+          if (await checkIfFileExists(outputPath) && await checkIfFileExists(jsonPath)) {
+            log.info(`Skipping ${pdfLink.url} - Files already exist`);
+            return;
+          }
+
+          pageCounter++;
+          const pdfFileName = safeFilename;
           log.info(
-            "pdfContent after getPdfContent",
-            pdfContent?.fileName,
-            pdfContent?.title,
-            pdfContent?.text,
+            `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
           );
+
+          const pdfContent = await getPdfContent(pdfLink?.url ?? "");
+          // log.info(
+          //   "pdfContent after getPdfContent",
+          //   pdfContent?.fileName,
+          //   pdfContent?.title,
+          //   pdfContent?.text,
+          // );
           if (pdfContent?.rawData) {
             await writeFile(outputPath, pdfContent.rawData);
             // log.info("PDF saved using raw data to:", outputPath);
           }
-
-          log.info(
-            `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
-          );
 
           const content =
             pdfContent?.text ?? (await extractTextFromFile(outputPath));
@@ -268,6 +295,23 @@ async function extractAndProcessHtmlContent(
       return;
     }
 
+    const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
+    const pdfFolder = `${outputFolder}/pdf`;
+    const jsonFolder = `${outputFolder}/json`;
+
+    await mkdir(pdfFolder, { recursive: true });
+    await mkdir(jsonFolder, { recursive: true });
+
+    const safeFilename = await createSafeFilename(requestUrl);
+    const pdfPath = path.join(pdfFolder, `${safeFilename}.pdf`);
+    const jsonPath = path.join(jsonFolder, `${safeFilename}.json`);
+
+    // Skip if both PDF and JSON already exist
+    if (await checkIfFileExists(pdfPath) && await checkIfFileExists(jsonPath)) {
+      log.info(`Skipping ${requestUrl} - Files already exist`);
+      return;
+    }
+
     const title = await page.title();
     pageCounter++;
     log.info(
@@ -293,15 +337,6 @@ async function extractAndProcessHtmlContent(
       }
       html = await getPageHtml(page, config.selector);
 
-      // Convert HTML to PDF if it matches patterns
-      const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
-      const pdfFolder = `${outputFolder}/pdf`;
-      await mkdir(pdfFolder, { recursive: true });
-
-      // Create a safe filename for the PDF
-      const safeFilename = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const pdfPath = path.join(pdfFolder, `${safeFilename}.pdf`);
-
       // Generate PDF from the page
       await page.pdf({
         path: pdfPath,
@@ -317,7 +352,7 @@ async function extractAndProcessHtmlContent(
       log.error(`Error extracting content from ${requestUrl}: ${error}`);
     }
 
-    await pushData({
+    const data = {
       title,
       counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
       url: requestUrl,
@@ -327,7 +362,11 @@ async function extractAndProcessHtmlContent(
       tokenCount: extractionError ? 0 : countToken(html),
       content: extractionError ? "" : html,
       error: extractionError ?? undefined,
-    });
+    };
+
+    // Write JSON file
+    await writeFile(jsonPath, JSON.stringify(data, null, 2));
+    await pushData(data);
 
     if (extractionError) {
       log.error(`Failed to process ${requestUrl}:`, error);
@@ -393,7 +432,7 @@ export async function crawl(config: Config) {
   pageCounter = 0;
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
 
-  await prepareOutputFolder(outputFolder);
+  // await prepareOutputFolder(outputFolder);
 
   if (process.env.NO_CRAWL !== "true") {
     crawler = new PlaywrightCrawler(
@@ -743,7 +782,7 @@ class GPTCrawlerCore {
           // Write individual JSON file
           const jsonFileName = `${safeFilename}.json`;
           const jsonFilePath = path.join(jsonFolder, jsonFileName);
-          await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+          // await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
 
           if (data?.status === CrawlStatus.Crawled) {
             crawledUrls.push(data?.url);
