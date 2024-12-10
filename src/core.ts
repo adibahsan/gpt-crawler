@@ -14,6 +14,7 @@ import { countToken, getPdfContent } from "./util/file.utils.js";
 import { exec } from "child_process";
 import { Storage } from "@google-cloud/storage";
 import { error } from "console";
+// import puppeteer from 'puppeteer';
 
 async function prepareOutputFolder(outputFolder: string) {
   try {
@@ -118,25 +119,33 @@ async function downloadAndProcessPdfs(
 ) {
   try {
     // Filter PDF links that match the config patterns
-    const pdfLinks = links.filter((link): link is { url: string; type: string } => {
-      if (link?.type !== "pdf") return false;
+    const pdfLinks = links.filter(
+      (link): link is { url: string; type: string } => {
+        if (link?.type !== "pdf") return false;
 
-      // Apply the same matching rules as HTML pages
-      const matchPatterns = Array.isArray(config.match) ? config.match : [config.match];
-      const excludePatterns = Array.isArray(config.exclude) ? config.exclude : config.exclude ? [config.exclude] : [];
+        // Apply the same matching rules as HTML pages
+        const matchPatterns = Array.isArray(config.match)
+          ? config.match
+          : [config.match];
+        const excludePatterns = Array.isArray(config.exclude)
+          ? config.exclude
+          : config.exclude
+            ? [config.exclude]
+            : [];
 
-      // Check if URL matches any of the include patterns
-      const isMatched = matchPatterns.some(pattern =>
-        new RegExp(pattern.replace(/\*/g, '.*')).test(link.url)
-      );
+        // Check if URL matches any of the include patterns
+        const isMatched = matchPatterns.some((pattern) =>
+          new RegExp(pattern.replace(/\*/g, ".*")).test(link.url),
+        );
 
-      // Check if URL matches any of the exclude patterns
-      const isExcluded = excludePatterns.some(pattern =>
-        new RegExp(pattern.replace(/\*/g, '.*')).test(link.url)
-      );
+        // Check if URL matches any of the exclude patterns
+        const isExcluded = excludePatterns.some((pattern) =>
+          new RegExp(pattern.replace(/\*/g, ".*")).test(link.url),
+        );
 
-      return isMatched && !isExcluded;
-    });
+        return isMatched && !isExcluded;
+      },
+    );
 
     if (pdfLinks.length === 0) {
       return;
@@ -148,7 +157,9 @@ async function downloadAndProcessPdfs(
     await mkdir(outputFolder, { recursive: true });
     await mkdir(pdfFolder, { recursive: true });
 
-    log.info(`Found ${pdfLinks.length} matching PDF links to process from ${requestUrl} using patterns ${config.match} and excluding ${config.exclude}`);
+    log.info(
+      `Found ${pdfLinks.length} matching PDF links to process from ${requestUrl} using patterns ${config.match} and excluding ${config.exclude}`,
+    );
 
     await Promise.all(
       pdfLinks.map(async (pdfLink) => {
@@ -161,17 +172,23 @@ async function downloadAndProcessPdfs(
           const pdfFileName = path.basename(pdfLink?.url ?? "");
 
           let pdfContent = await getPdfContent(pdfLink?.url ?? "");
-          log.info("pdfContent after getPdfContent", pdfContent?.fileName, pdfContent?.title, pdfContent?.text);
+          log.info(
+            "pdfContent after getPdfContent",
+            pdfContent?.fileName,
+            pdfContent?.title,
+            pdfContent?.text,
+          );
           if (pdfContent?.rawData) {
             await writeFile(outputPath, pdfContent.rawData);
-            log.info("PDF saved using raw data to:", outputPath);
-        }
+            // log.info("PDF saved using raw data to:", outputPath);
+          }
 
           log.info(
             `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
           );
 
-          const content = pdfContent?.text ?? await extractTextFromFile(outputPath);
+          const content =
+            pdfContent?.text ?? (await extractTextFromFile(outputPath));
           const tokenCount = countToken(content);
           await pushData({
             title: pdfFileName,
@@ -194,20 +211,23 @@ async function downloadAndProcessPdfs(
             filetype: FileFormat.Pdf,
             status: CrawlStatus.Failed,
             datetime: new Date().toISOString(),
-            error: `${error}`
+            error: `${error}`,
           });
         }
       }),
     );
   } catch (error) {
-    log.error(`Critical error in downloadAndProcessPdfs for ${requestUrl}:`, error);
+    log.error(
+      `Critical error in downloadAndProcessPdfs for ${requestUrl}:`,
+      error,
+    );
     await pushData({
       url: requestUrl,
       counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
       filetype: FileFormat.Pdf,
       status: CrawlStatus.Failed,
       datetime: new Date().toISOString(),
-      error: `${error}`
+      error: `${error}`,
     });
   }
 }
@@ -221,22 +241,30 @@ async function extractAndProcessHtmlContent(
 ) {
   try {
     // Check if URL matches the patterns
-    const matchPatterns = Array.isArray(config.match) ? config.match : [config.match];
-    const excludePatterns = Array.isArray(config.exclude) ? config.exclude : config.exclude ? [config.exclude] : [];
+    const matchPatterns = Array.isArray(config.match)
+      ? config.match
+      : [config.match];
+    const excludePatterns = Array.isArray(config.exclude)
+      ? config.exclude
+      : config.exclude
+        ? [config.exclude]
+        : [];
 
     // Check if URL matches any of the include patterns
-    const isMatched = matchPatterns.some(pattern =>
-      new RegExp(pattern.replace(/\*/g, '.*')).test(requestUrl)
+    const isMatched = matchPatterns.some((pattern) =>
+      new RegExp(pattern.replace(/\*/g, ".*")).test(requestUrl),
     );
 
     // Check if URL matches any of the exclude patterns
-    const isExcluded = excludePatterns.some(pattern =>
-      new RegExp(pattern.replace(/\*/g, '.*')).test(requestUrl)
+    const isExcluded = excludePatterns.some((pattern) =>
+      new RegExp(pattern.replace(/\*/g, ".*")).test(requestUrl),
     );
 
     // Skip if URL doesn't match patterns or is excluded
     if (!isMatched || isExcluded) {
-      log.info(`Skipping ${requestUrl} - Does not match patterns or is excluded`);
+      log.info(
+        `Skipping ${requestUrl} - Does not match patterns or is excluded`,
+      );
       return;
     }
 
@@ -246,7 +274,7 @@ async function extractAndProcessHtmlContent(
       `Crawling: Page ${pageCounter} / ${config.maxPagesToCrawl} - URL: ${requestUrl}...`,
     );
 
-    let html = '';
+    let html = "";
     let extractionError = null;
 
     try {
@@ -264,10 +292,29 @@ async function extractAndProcessHtmlContent(
         }
       }
       html = await getPageHtml(page, config.selector);
+
+      // Convert HTML to PDF if it matches patterns
+      const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
+      const pdfFolder = `${outputFolder}/pdf`;
+      await mkdir(pdfFolder, { recursive: true });
+
+      // Create a safe filename for the PDF
+      const safeFilename = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const pdfPath = path.join(pdfFolder, `${safeFilename}.pdf`);
+
+      // Generate PDF from the page
+      await page.pdf({
+        path: pdfPath,
+        format: 'A4',
+        margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
+        printBackground: true
+      });
+
+      log.info(`Successfully generated PDF at: ${pdfPath}`);
+
     } catch (error) {
       extractionError = error;
-      log.error(`Error extracting HTML from ${requestUrl}: ${error}`);
-      // Continue execution to log the failure
+      log.error(`Error extracting content from ${requestUrl}: ${error}`);
     }
 
     await pushData({
@@ -278,8 +325,8 @@ async function extractAndProcessHtmlContent(
       status: extractionError ? CrawlStatus.Failed : CrawlStatus.Crawled,
       datetime: new Date().toISOString(),
       tokenCount: extractionError ? 0 : countToken(html),
-      content: extractionError ? '' : html,
-      error: extractionError ?? undefined
+      content: extractionError ? "" : html,
+      error: extractionError ?? undefined,
     });
 
     if (extractionError) {
@@ -287,24 +334,23 @@ async function extractAndProcessHtmlContent(
     } else {
       log.info(`Successfully processed ${requestUrl}`);
     }
-
   } catch (error) {
     // Handle any errors in the main function
     log.error(`Critical error processing ${requestUrl}:`, {
       error,
-      selector: config.selector
+      selector: config.selector,
     });
 
     await pushData({
-      title: 'Error',
+      title: "Error",
       counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
       url: requestUrl,
       filetype: FileFormat.Html,
       status: CrawlStatus.Failed,
       datetime: new Date().toISOString(),
       tokenCount: 0,
-      content: '',
-      error
+      content: "",
+      error,
     });
   }
 }
@@ -389,14 +435,16 @@ export async function crawl(config: Config) {
                     loadedUrl,
                   );
                 } catch (pdfError) {
-                  log.error(`Error processing PDFs from ${loadedUrl}: - ${pdfError}`);
+                  log.error(
+                    `Error processing PDFs from ${loadedUrl}: - ${pdfError}`,
+                  );
                   // Continue with crawling despite PDF processing error
                 }
               } else {
                 log.info(`No valid links found to process from ${loadedUrl}`);
               }
             } catch (linkError) {
-              log.error(`Error extracting links from ${loadedUrl}:`, {error});
+              log.error(`Error extracting links from ${loadedUrl}:`, { error });
               // Continue with crawling despite link extraction error
             }
 
@@ -409,7 +457,7 @@ export async function crawl(config: Config) {
                 exclude: [
                   ...(typeof config.exclude === "string"
                     ? [config.exclude]
-                    : config.exclude ?? []),
+                    : (config.exclude ?? [])),
                   "**/*.pdf",
                 ],
                 transformRequestFunction: (request) => {
@@ -425,7 +473,9 @@ export async function crawl(config: Config) {
               }`,
             );
           } catch (error) {
-            log.error(`Error in requestHandler: ${error} - URL -${request.loadedUrl}`);
+            log.error(
+              `Error in requestHandler: ${error} - URL -${request.loadedUrl}`,
+            );
             await pushData({
               title: "",
               counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
@@ -434,11 +484,9 @@ export async function crawl(config: Config) {
               status: CrawlStatus.Failed,
               datetime: new Date().toISOString(),
               tokenCount: 0,
-              content: '',
-              error: `${error}`
+              content: "",
+              error: `${error}`,
             });
-
-
           }
         },
         maxRequestsPerCrawl: config.maxPagesToCrawl,
@@ -648,60 +696,69 @@ class GPTCrawlerCore {
       const failedUrls: string[] = [];
       const formattedData = [];
 
-
       for (const file of files) {
-                if (path.extname(file) === ".json") {
-                    const filePath = path.join(datasetFolder, file);
-                    const content = await readFile(filePath, "utf-8");
-                    const data = JSON.parse(content);
+        if (path.extname(file) === ".json") {
+          const filePath = path.join(datasetFolder, file);
+          const content = await readFile(filePath, "utf-8");
+          const data = JSON.parse(content);
 
-                    // Create safe filename without extension
-                    const safeFilename = this.createSafeFilename(data.url).replace(/\.json$/, '');
+          // Create safe filename without extension
+          const safeFilename = this.createSafeFilename(data.url).replace(
+            /\.json$/,
+            "",
+          );
 
-                    // Format the data according to the new structure
-                    const formattedItem = {
-                        serial: fileCounter,
-                        url: data.url,
-                        title: data.title,
-                        fileName: safeFilename,
-                        fileType: data.filetype?.toLowerCase() || 'html',
-                        jsonPath: path.join(
-                            './datasets',
-                            this.config.name,
-                            'json',
-                            `${safeFilename}.json`
-                        ).replace(/\\/g, '/'),  // Convert Windows paths to forward slashes
-                        pdfPath: data.filetype?.toLowerCase() === "pdf" ? path.join(
-                            './datasets',
-                            this.config.name,
-                            'pdf',
-                            `${data.title ?? "unnamed"}`
-                        ).replace(/\\/g, '/') : null,
-                        tokenCount: data.tokenCount || 0,
-                        text: data?.content || data?.text || ''
-                    };
+          // Format the data according to the new structure
+          const formattedItem = {
+            serial: fileCounter,
+            url: data.url,
+            title: data.title,
+            fileName: safeFilename,
+            fileType: data.filetype?.toLowerCase() || "html",
+            jsonPath: path
+              .join(
+                "./datasets",
+                this.config.name,
+                "json",
+                `${safeFilename}.json`,
+              )
+              .replace(/\\/g, "/"), // Convert Windows paths to forward slashes
+            pdfPath:
+              data.filetype?.toLowerCase() === "pdf"
+                ? path
+                    .join(
+                      "./datasets",
+                      this.config.name,
+                      "pdf",
+                      `${data.title ?? "unnamed"}`,
+                    )
+                    .replace(/\\/g, "/")
+                : null,
+            tokenCount: data.tokenCount || 0,
+            text: data?.content || data?.text || "",
+          };
 
-                    formattedData.push(formattedItem);
+          formattedData.push(formattedItem);
 
-                    // Write individual JSON file
-                    const jsonFileName = `${safeFilename}.json`;
-                    const jsonFilePath = path.join(jsonFolder, jsonFileName);
-                    await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+          // Write individual JSON file
+          const jsonFileName = `${safeFilename}.json`;
+          const jsonFilePath = path.join(jsonFolder, jsonFileName);
+          await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
 
-                    if (data?.status === CrawlStatus.Crawled) {
-                        crawledUrls.push(data?.url);
-                        if (data?.filetype === FileFormat.Html) {
-                            htmlCounter++;
-                        } else if (data?.filetype === FileFormat.Pdf) {
-                            pdfCounter++;
-                        }
-                    } else {
-                        failedUrls.push(data?.url);
-                    }
-
-                    fileCounter++;
-                }
+          if (data?.status === CrawlStatus.Crawled) {
+            crawledUrls.push(data?.url);
+            if (data?.filetype === FileFormat.Html) {
+              htmlCounter++;
+            } else if (data?.filetype === FileFormat.Pdf) {
+              pdfCounter++;
             }
+          } else {
+            failedUrls.push(data?.url);
+          }
+
+          fileCounter++;
+        }
+      }
 
       // const combinedFilePath = path.join(outputFolder, "combined_output.json");
 
@@ -794,8 +851,8 @@ class GPTCrawlerCore {
 
         // Optionally clean up local files
         if (this.config.cleanupAfterUpload) {
-            await rm(outputFolder, { recursive: true, force: true });
-            console.log('\n🧹 Cleaned up local files');
+          await rm(outputFolder, { recursive: true, force: true });
+          console.log("\n🧹 Cleaned up local files");
         }
 
         // return `gs://${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`;
