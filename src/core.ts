@@ -715,6 +715,7 @@ export async function write(config: Config): Promise<PathLike> {
     let fileCounter = 1;
 
     const formattedData = [];
+    const formattedDataWithText = [];
 
     for (const file of files) {
       if (path.extname(file) === ".json") {
@@ -726,8 +727,8 @@ export async function write(config: Config): Promise<PathLike> {
         const safeFilename = await createSafeFilename(data.url);
         const formattedSafeFilename = safeFilename.replace(/\.json$/, "");
 
-        // Format the data according to the new structure
-        const formattedItem = {
+        // Base item structure without text
+        const baseItem = {
           serial: fileCounter,
           url: data.url,
           title: data.title,
@@ -753,15 +754,16 @@ export async function write(config: Config): Promise<PathLike> {
                   .replace(/\\/g, "/")
               : null,
           tokenCount: data.tokenCount || 0,
-          text: data?.content || data?.text || "",
         };
 
-        formattedData.push(formattedItem);
+        // Add to formattedData without text
+        formattedData.push(baseItem);
 
-        // Write individual JSON file
-        const jsonFileName = `${formattedSafeFilename}.json`;
-        const jsonFilePath = path.join(jsonFolder, jsonFileName);
-        // await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+        // Add to formattedDataWithText including text
+        formattedDataWithText.push({
+          ...baseItem,
+          text: data?.content || data?.text || "",
+        });
 
         if (data?.status === CrawlStatus.Crawled) {
           crawledUrls.push(data?.url);
@@ -778,8 +780,6 @@ export async function write(config: Config): Promise<PathLike> {
       }
     }
 
-    // const combinedFilePath = path.join(outputFolder, "combined_output.json");
-
     const crawlMapData = {
       crawledUrls,
       failedUrls,
@@ -794,6 +794,7 @@ export async function write(config: Config): Promise<PathLike> {
     const logFolder = path.join(outputFolder, "logs");
     const crawlLogFile = path.join(logFolder, "crawl.log.json");
     const crawlMapFile = path.join(logFolder, "crawl.map.json");
+    const configNameFile = path.join(outputFolder, `${config.name || "default"}.json`);
 
     await Promise.all([
       mkdir(outputFolder, { recursive: true }),
@@ -803,6 +804,7 @@ export async function write(config: Config): Promise<PathLike> {
     await Promise.all([
       writeFile(crawlMapFile, JSON.stringify(formattedData, null, 2)),
       writeFile(crawlLogFile, JSON.stringify(crawlMapData, null, 2)),
+      writeFile(configNameFile, JSON.stringify(formattedDataWithText, null, 2)),
     ]);
 
     // Upload to GCS if configured
@@ -946,6 +948,7 @@ class GPTCrawlerCore {
       const logFolder = path.join(outputFolder, "logs");
       const crawlLogFile = path.join(logFolder, "crawl.log.json");
       const crawlMapFile = path.join(logFolder, "crawl.map.json");
+      const configNameFile = path.join(outputFolder, `${this.config.name || "default"}.json`);
 
       await Promise.all([
         mkdir(outputFolder, { recursive: true }),
@@ -956,13 +959,13 @@ class GPTCrawlerCore {
       const datasetFolder = "storage/datasets/default";
       const files = await readdir(datasetFolder);
 
-      const combinedData = [];
+      const formattedData = [];
+      const formattedDataWithText = [];
       let fileCounter = 1;
       let htmlCounter = 0;
       let pdfCounter = 0;
       const crawledUrls: string[] = [];
       const failedUrls: string[] = [];
-      const formattedData = [];
 
       for (const file of files) {
         if (path.extname(file) === ".json") {
@@ -974,8 +977,8 @@ class GPTCrawlerCore {
           const safeFilename = await createSafeFilename(data.url);
           const formattedSafeFilename = safeFilename.replace(/\.json$/, "");
 
-          // Format the data according to the new structure
-          const formattedItem = {
+          // Base item structure without text
+          const baseItem = {
             serial: fileCounter,
             url: data.url,
             title: data.title,
@@ -989,27 +992,25 @@ class GPTCrawlerCore {
                 `${formattedSafeFilename}.json`,
               )
               .replace(/\\/g, "/"), // Convert Windows paths to forward slashes
-            pdfPath:
-              data.filetype?.toLowerCase() === "pdf"
-                ? path
+            pdfPath: path
                     .join(
                       "./datasets",
                       this.config.name,
                       "pdf",
-                      `${data.title ?? "unnamed"}`,
+                      `${formattedSafeFilename}.pdf`,
                     )
-                    .replace(/\\/g, "/")
-                : null,
+                    .replace(/\\/g, "/"),
             tokenCount: data.tokenCount || 0,
-            text: data?.content || data?.text || "",
           };
 
-          formattedData.push(formattedItem);
+          // Add to formattedData without text
+          formattedData.push(baseItem);
 
-          // Write individual JSON file
-          const jsonFileName = `${formattedSafeFilename}.json`;
-          const jsonFilePath = path.join(jsonFolder, jsonFileName);
-          // await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+          // Add to formattedDataWithText including text
+          formattedDataWithText.push({
+            ...baseItem,
+            text: data?.content || data?.text || "",
+          });
 
           if (data?.status === CrawlStatus.Crawled) {
             crawledUrls.push(data?.url);
@@ -1026,8 +1027,6 @@ class GPTCrawlerCore {
         }
       }
 
-      // const combinedFilePath = path.join(outputFolder, "combined_output.json");
-
       const crawlMapData = {
         crawledUrls,
         failedUrls,
@@ -1041,6 +1040,7 @@ class GPTCrawlerCore {
       await Promise.all([
         writeFile(crawlMapFile, JSON.stringify(formattedData, null, 2)),
         writeFile(crawlLogFile, JSON.stringify(crawlMapData, null, 2)),
+        writeFile(configNameFile, JSON.stringify(formattedDataWithText, null, 2)),
       ]);
 
       // Upload to GCS if configured
@@ -1051,7 +1051,7 @@ class GPTCrawlerCore {
         const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
 
         // Create a folder structure in GCS
-        const gcsBasePath = `${crawlId}/${this.config.name}`;
+        const gcsBasePath = `${this.config.name}`;
 
         console.log(
           `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`,
