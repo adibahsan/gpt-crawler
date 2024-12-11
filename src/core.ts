@@ -840,6 +840,15 @@ export async function write(config: Config): Promise<PathLike> {
       });
       console.log("✅ Uploaded crawl map to logs directory");
 
+      // Upload config-named file to root directory
+      await bucket.upload(configNameFile, {
+        destination: `${crawlId}/${config.name || "default"}.json`,
+        metadata: {
+          contentType: "application/json",
+        },
+      });
+      console.log(`✅ Uploaded ${config.name || "default"}.json to root directory`);
+
       // Upload JSON files to json directory
       const jsonFiles = await glob(`${jsonFolder}/*.json`);
       if (jsonFiles.length > 0) {
@@ -881,6 +890,7 @@ export async function write(config: Config): Promise<PathLike> {
       console.log("\nUpload Summary:");
       console.log(`- Combined output: ${crawlId}/logs/crawl.map.json`);
       console.log(`- Crawl map: ${crawlId}/logs/crawl_map.json`);
+      console.log(`- Config file: ${crawlId}/${config.name || "default"}.json`);
       console.log(`- JSON files: ${jsonFiles.length}`);
       console.log(`- PDF files: ${pdfFiles.length}`);
 
@@ -1075,6 +1085,15 @@ class GPTCrawlerCore {
         });
         console.log("✅ Uploaded crawl map to logs directory");
 
+        // Upload config-named file to root directory
+        await bucket.upload(configNameFile, {
+          destination: `${gcsBasePath}/${this.config.name || "default"}.json`,
+          metadata: {
+            contentType: "application/json",
+          },
+        });
+        console.log(`✅ Uploaded ${this.config.name || "default"}.json to root directory`);
+
         // Upload JSON files to json directory
         const jsonFiles = await glob(`${jsonFolder}/*.json`);
         if (jsonFiles.length > 0) {
@@ -1115,6 +1134,7 @@ class GPTCrawlerCore {
         console.log("\nUpload Summary:");
         console.log(`- Combined output: ${gcsBasePath}/logs/crawl.map.json`);
         console.log(`- Crawl map: ${gcsBasePath}/logs/crawl_map.json`);
+        console.log(`- Config file: ${gcsBasePath}/${this.config.name || "default"}.json`);
         console.log(`- JSON files: ${jsonFiles.length}`);
         console.log(`- PDF files: ${pdfFiles.length}`);
 
