@@ -4,7 +4,7 @@ import { Config, configSchema } from "./config.js";
 import { Page } from "playwright";
 import { isWithinTokenLimit } from "gpt-tokenizer";
 import fs, { PathLike } from "fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile, access } from "fs/promises";
 import path from "path";
 import axios from "axios";
 import PDFParser from "pdf2json";
@@ -130,6 +130,10 @@ async function checkIfFileExists(filePath: string): Promise<boolean> {
   }
 }
 
+let newPdfCounter = 0;
+let newHtmlCounter = 0;
+let skippedCounter = 0;
+
 async function downloadAndProcessPdfs(
   links: { url: string; type: string }[],
   config: Config,
@@ -175,12 +179,11 @@ async function downloadAndProcessPdfs(
     const pdfFolder = `${outputFolder}/pdf`;
     const jsonFolder = `${outputFolder}/json`;
 
-    await mkdir(outputFolder, { recursive: true });
     await mkdir(pdfFolder, { recursive: true });
     await mkdir(jsonFolder, { recursive: true });
 
     log.info(
-      `Found ${pdfLinks.length} matching PDF links to process from ${requestUrl} using patterns ${config.match} and excluding ${config.exclude}`,
+      `Found ${pdfLinks.length} PDF links to process from ${requestUrl}`,
     );
 
     await Promise.all(
@@ -200,7 +203,7 @@ async function downloadAndProcessPdfs(
           // Check file existence separately for better logging
           const pdfExists = await checkIfFileExists(outputPath);
           const jsonExists = await checkIfFileExists(jsonPath);
-          
+
           log.info('File existence check:', {
             pdfPath: outputPath,
             pdfExists,
@@ -211,13 +214,14 @@ async function downloadAndProcessPdfs(
           // Skip if both PDF and JSON already exist
           if (pdfExists && jsonExists) {
             log.info(`Skipping ${pdfLink.url} - Files already exist`);
+            skippedCounter++;
             return;
           }
 
-          // pageCounter++;
+          newPdfCounter++;
           const pdfFileName = safeFilename;
           log.info(
-            `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
+            `Crawling: PDF ${newPdfCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
           );
 
           const pdfContent = await getPdfContent(pdfLink?.url ?? "");
@@ -235,7 +239,7 @@ async function downloadAndProcessPdfs(
           const content =
             pdfContent?.text ?? (await extractTextFromFile(outputPath));
           const tokenCount = countToken(content);
-          
+
           // Prepare data for both JSON file and pushData
           const data = {
             title: pdfFileName,
@@ -257,7 +261,7 @@ async function downloadAndProcessPdfs(
           await pushData(data);
         } catch (error) {
           log.error(`Error processing PDF ${pdfLink?.url}:`, error);
-          
+
           const errorData = {
             title: path.basename(pdfLink?.url ?? ""),
             url: pdfLink?.url,
@@ -351,7 +355,7 @@ async function extractAndProcessHtmlContent(
     // Check file existence separately for better logging
     const pdfExists = await checkIfFileExists(pdfPath);
     const jsonExists = await checkIfFileExists(jsonPath);
-    
+
     log.info('File existence check:', {
       pdfPath,
       pdfExists,
@@ -362,9 +366,11 @@ async function extractAndProcessHtmlContent(
     // Skip if both PDF and JSON already exist
     if (pdfExists && jsonExists) {
       log.info(`Skipping ${requestUrl} - Files already exist`);
+      skippedCounter++;
       return;
     }
 
+    newHtmlCounter++;
     const title = await page.title();
     pageCounter++;
     log.info(
@@ -662,87 +668,235 @@ export async function crawl(config: Config) {
   }
 }
 
-export async function write(config: Config) {
-  let nextFileNameString: PathLike = "";
+export async function write(config: Config): Promise<PathLike> {
   try {
-    const jsonFiles = await glob("storage/datasets/default/*.json", {
-      absolute: true,
-    });
+    const datasetFolder = path.join(
+      "storage",
+      "datasets",
+      config.name || "default",
+    );
 
-    console.log(`Found ${jsonFiles.length} files to combine...`);
+    // If no new content was crawled, return existing crawl log if it exists
+    if (newPdfCounter === 0 && newHtmlCounter === 0) {
+      console.log("No new content was crawled. All URLs were either skipped or already processed.");
 
-    let currentResults: Record<string, any>[] = [];
-    let currentSize: number = 0;
-    let fileCounter: number = 1;
-    const maxBytes: number = config.maxFileSize
-      ? config.maxFileSize * 1024 * 1024
-      : Infinity;
+      const crawlLogFile = path.join(datasetFolder, "logs", "crawl.log.json");
 
-    const getStringByteSize = (str: string): number =>
-      Buffer.byteLength(str, "utf-8");
+      // Check if crawl log exists and return it
+      try {
+        await access(crawlLogFile);
+        return crawlLogFile;
+      } catch {
+        // If no existing crawl log, return the dataset folder
+        return datasetFolder;
+      }
+    }
 
-    const nextFileName = (): string =>
-      `${config.outputFileName.replace(/\.json$/, "")}-${fileCounter}.json`;
+    const jsonFolder = path.join(datasetFolder, "json");
+    const pdfFolder = path.join(datasetFolder, "pdf");
 
-    const writeBatchToFile = async (): Promise<void> => {
-      nextFileNameString = nextFileName();
-      await writeFile(
-        nextFileNameString,
-        JSON.stringify(currentResults, null, 2),
-      );
-      console.log(
-        `Wrote ${currentResults.length} items to ${nextFileNameString}`,
-      );
-      currentResults = [];
-      currentSize = 0;
-      fileCounter++;
-    };
+    // Create all necessary folders upfront
+    await mkdir(datasetFolder, { recursive: true });
+    await mkdir(jsonFolder, { recursive: true });
+    await mkdir(pdfFolder, { recursive: true });
 
-    let estimatedTokens: number = 0;
+    // Check if directory exists and has files
+    const files = await readdir(datasetFolder).catch(() => []);
 
-    const addContentOrSplit = async (
-      data: Record<string, any>,
-    ): Promise<void> => {
-      const contentString: string = JSON.stringify(data);
-      const tokenCount: number | false = isWithinTokenLimit(
-        contentString,
-        config.maxTokens || Infinity,
-      );
+    if (files.length === 0) {
+      console.log("No files found to process. This may happen if all URLs were skipped or if no new content was crawled.");
+      return datasetFolder;
+    }
 
-      if (typeof tokenCount === "number") {
-        if (estimatedTokens + tokenCount > config.maxTokens!) {
-          if (currentResults.length > 0) {
-            await writeBatchToFile();
+    const crawledUrls: string[] = [];
+    const failedUrls: string[] = [];
+    let htmlCounter = 0;
+    let pdfCounter = 0;
+    let fileCounter = 1;
+
+    const formattedData = [];
+
+    for (const file of files) {
+      if (path.extname(file) === ".json") {
+        const filePath = path.join(datasetFolder, file);
+        const content = await readFile(filePath, "utf-8");
+        const data = JSON.parse(content);
+
+        // Create safe filename without extension
+        const safeFilename = await createSafeFilename(data.url);
+        const formattedSafeFilename = safeFilename.replace(/\.json$/, "");
+
+        // Format the data according to the new structure
+        const formattedItem = {
+          serial: fileCounter,
+          url: data.url,
+          title: data.title,
+          fileName: formattedSafeFilename,
+          fileType: data.filetype?.toLowerCase() || "html",
+          jsonPath: path
+            .join(
+              "./datasets",
+              config.name,
+              "json",
+              `${formattedSafeFilename}.json`,
+            )
+            .replace(/\\/g, "/"), // Convert Windows paths to forward slashes
+          pdfPath:
+            data.filetype?.toLowerCase() === "pdf"
+              ? path
+                  .join(
+                    "./datasets",
+                    config.name,
+                    "pdf",
+                    `${data.title ?? "unnamed"}`,
+                  )
+                  .replace(/\\/g, "/")
+              : null,
+          tokenCount: data.tokenCount || 0,
+          text: data?.content || data?.text || "",
+        };
+
+        formattedData.push(formattedItem);
+
+        // Write individual JSON file
+        const jsonFileName = `${formattedSafeFilename}.json`;
+        const jsonFilePath = path.join(jsonFolder, jsonFileName);
+        // await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
+
+        if (data?.status === CrawlStatus.Crawled) {
+          crawledUrls.push(data?.url);
+          if (data?.filetype === FileFormat.Html) {
+            htmlCounter++;
+          } else if (data?.filetype === FileFormat.Pdf) {
+            pdfCounter++;
           }
-          estimatedTokens = Math.floor(tokenCount / 2);
-          currentResults.push(data);
         } else {
-          currentResults.push(data);
-          estimatedTokens += tokenCount;
+          failedUrls.push(data?.url);
         }
-      }
 
-      currentSize += getStringByteSize(contentString);
-      if (currentSize > maxBytes) {
-        await writeBatchToFile();
+        fileCounter++;
       }
+    }
+
+    // const combinedFilePath = path.join(outputFolder, "combined_output.json");
+
+    const crawlMapData = {
+      crawledUrls,
+      failedUrls,
+      totalPdf: pdfCounter,
+      totalHtml: htmlCounter,
+      newPdfCount: newPdfCounter,
+      newHtmlCount: newHtmlCounter,
+      skippedCount: skippedCounter
     };
 
-    for (const file of jsonFiles) {
-      const fileContent = await readFile(file, "utf-8");
-      const data: Record<string, any> = JSON.parse(fileContent);
-      await addContentOrSplit(data);
+    const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
+    const logFolder = path.join(outputFolder, "logs");
+    const crawlLogFile = path.join(logFolder, "crawl.log.json");
+    const crawlMapFile = path.join(logFolder, "crawl.map.json");
+
+    await Promise.all([
+      mkdir(outputFolder, { recursive: true }),
+      mkdir(logFolder, { recursive: true }),
+    ]);
+
+    await Promise.all([
+      writeFile(crawlMapFile, JSON.stringify(formattedData, null, 2)),
+      writeFile(crawlLogFile, JSON.stringify(crawlMapData, null, 2)),
+    ]);
+
+    // Upload to GCS if configured
+    if (process.env.GCP_BUCKET_NAME && config.uploadToGCP) {
+      const storage = new Storage({
+        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      });
+      const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
+
+      // Create a folder structure in GCS
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const crawlId = `crawl-${timestamp}`;
+
+      console.log(
+        `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${crawlId}`,
+      );
+
+      // Upload combined output to root
+      await bucket.upload(crawlMapFile, {
+        destination: `${crawlId}/logs/crawl.map.json`,
+        metadata: {
+          contentType: "application/json",
+        },
+      });
+      console.log("✅ Uploaded combined output");
+
+      // Upload crawl map to logs directory
+      await bucket.upload(crawlLogFile, {
+        destination: `${crawlId}/logs/crawl.log.json`,
+        metadata: {
+          contentType: "application/json",
+        },
+      });
+      console.log("✅ Uploaded crawl map to logs directory");
+
+      // Upload JSON files to json directory
+      const jsonFiles = await glob(`${jsonFolder}/*.json`);
+      if (jsonFiles.length > 0) {
+        console.log(`\nUploading ${jsonFiles.length} JSON files...`);
+        await Promise.all(
+          jsonFiles.map(async (filePath) => {
+            const fileName = path.basename(filePath);
+            await bucket.upload(filePath, {
+              destination: `${crawlId}/json/${fileName}`,
+              metadata: {
+                contentType: "application/json",
+              },
+            });
+          }),
+        );
+        console.log("✅ Uploaded all JSON files");
+      }
+
+      // Upload PDF files to pdf directory
+      const pdfFolder = `${outputFolder}/pdf`;
+      const pdfFiles = await glob(`${pdfFolder}/*.pdf`);
+      if (pdfFiles.length > 0) {
+        console.log(`\nUploading ${pdfFiles.length} PDF files...`);
+        await Promise.all(
+          pdfFiles.map(async (filePath) => {
+            const fileName = path.basename(filePath);
+            await bucket.upload(filePath, {
+              destination: `${crawlId}/pdf/${fileName}`,
+              metadata: {
+                contentType: "application/pdf",
+              },
+            });
+          }),
+        );
+        console.log(" Uploaded all PDF files");
+      }
+
+      // Log upload summary
+      console.log("\nUpload Summary:");
+      console.log(`- Combined output: ${crawlId}/logs/crawl.map.json`);
+      console.log(`- Crawl map: ${crawlId}/logs/crawl_map.json`);
+      console.log(`- JSON files: ${jsonFiles.length}`);
+      console.log(`- PDF files: ${pdfFiles.length}`);
+
+      // Optionally clean up local files
+      if (config.cleanupAfterUpload) {
+        await rm(outputFolder, { recursive: true, force: true });
+        console.log("\n🧹 Cleaned up local files");
+      }
+
+      // return `gs://${process.env.GCP_BUCKET_NAME}/${crawlId}`;
     }
 
-    if (currentResults.length > 0) {
-      await writeBatchToFile();
-    }
+    console.log(`Wrote combined JSON to ${crawlMapFile}`);
+    return crawlLogFile;
   } catch (error) {
-    console.error(`Error in write function: ${error}`);
+    console.error(`Error in write method:`, error);
     throw error;
   }
-
-  return nextFileNameString;
 }
 
 class GPTCrawlerCore {
@@ -756,15 +910,37 @@ class GPTCrawlerCore {
     await crawl(this.config);
   }
 
-  async write(): Promise<PathLike> {
+  async write(this: GPTCrawlerCore): Promise<PathLike> {
     try {
+      const outputFolder = path.join(
+          baseFolder,
+          this.config.name || "defaultFolder",
+      );
+      // If no new content was crawled, return existing crawl log if it exists
+      if (newPdfCounter === 0 && newHtmlCounter === 0) {
+        console.log("No new content was crawled. All URLs were either skipped or already processed.");
+        // const datasetFolder = path.join(
+        //   "storage",
+        //   "datasets",
+        //   this.config.name || "default",
+        // );
+        const crawlLogFile = path.join(outputFolder, "logs", "crawl.log.json");
+
+
+        // Check if crawl log exists and return it
+        try {
+         let output =  await access(crawlLogFile);
+          return crawlLogFile;
+        } catch {
+          // If no existing crawl log, return the dataset folder
+          return outputFolder;
+        }
+      }
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const crawlId = `crawl-${timestamp}`;
 
-      const outputFolder = path.join(
-        baseFolder,
-        this.config.name || "defaultFolder",
-      );
+
       const jsonFolder = path.join(outputFolder, "json");
       const pdfFolder = path.join(outputFolder, "pdf");
       const logFolder = path.join(outputFolder, "logs");
@@ -795,24 +971,22 @@ class GPTCrawlerCore {
           const data = JSON.parse(content);
 
           // Create safe filename without extension
-          const safeFilename = this.createSafeFilename(data.url).replace(
-            /\.json$/,
-            "",
-          );
+          const safeFilename = await createSafeFilename(data.url);
+          const formattedSafeFilename = safeFilename.replace(/\.json$/, "");
 
           // Format the data according to the new structure
           const formattedItem = {
             serial: fileCounter,
             url: data.url,
             title: data.title,
-            fileName: safeFilename,
+            fileName: formattedSafeFilename,
             fileType: data.filetype?.toLowerCase() || "html",
             jsonPath: path
               .join(
                 "./datasets",
                 this.config.name,
                 "json",
-                `${safeFilename}.json`,
+                `${formattedSafeFilename}.json`,
               )
               .replace(/\\/g, "/"), // Convert Windows paths to forward slashes
             pdfPath:
@@ -833,7 +1007,7 @@ class GPTCrawlerCore {
           formattedData.push(formattedItem);
 
           // Write individual JSON file
-          const jsonFileName = `${safeFilename}.json`;
+          const jsonFileName = `${formattedSafeFilename}.json`;
           const jsonFilePath = path.join(jsonFolder, jsonFileName);
           // await writeFile(jsonFilePath, JSON.stringify(data, null, 2));
 
@@ -859,6 +1033,9 @@ class GPTCrawlerCore {
         failedUrls,
         totalPdf: pdfCounter,
         totalHtml: htmlCounter,
+        newPdfCount: newPdfCounter,
+        newHtmlCount: newHtmlCounter,
+        skippedCount: skippedCounter
       };
 
       await Promise.all([
