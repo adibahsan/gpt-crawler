@@ -190,13 +190,31 @@ async function downloadAndProcessPdfs(
           const outputPath = path.join(pdfFolder, `${safeFilename}.pdf`);
           const jsonPath = path.join(jsonFolder, `${safeFilename}.json`);
 
+          log.info('File paths generated:', {
+            originalUrl: pdfLink.url,
+            safeFilename,
+            pdfPath: outputPath,
+            jsonPath
+          });
+
+          // Check file existence separately for better logging
+          const pdfExists = await checkIfFileExists(outputPath);
+          const jsonExists = await checkIfFileExists(jsonPath);
+          
+          log.info('File existence check:', {
+            pdfPath: outputPath,
+            pdfExists,
+            jsonPath,
+            jsonExists
+          });
+
           // Skip if both PDF and JSON already exist
-          if (await checkIfFileExists(outputPath) && await checkIfFileExists(jsonPath)) {
+          if (pdfExists && jsonExists) {
             log.info(`Skipping ${pdfLink.url} - Files already exist`);
             return;
           }
 
-          pageCounter++;
+          // pageCounter++;
           const pdfFileName = safeFilename;
           log.info(
             `Crawling: PDF ${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
@@ -217,29 +235,46 @@ async function downloadAndProcessPdfs(
           const content =
             pdfContent?.text ?? (await extractTextFromFile(outputPath));
           const tokenCount = countToken(content);
-          await pushData({
+          
+          // Prepare data for both JSON file and pushData
+          const data = {
             title: pdfFileName,
-            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            counter: `${pdfLink.url}`,
             sourceUrl: requestUrl,
             url: pdfLink?.url,
             filetype: FileFormat.Pdf,
-            status: content !== "" ? CrawlStatus.Crawled : CrawlStatus.Failed,
+            status: CrawlStatus.Crawled,
             datetime: new Date().toISOString(),
             tokenCount,
-            text: content,
-          });
+            content,
+          };
+
+          // Save JSON file
+          await writeFile(jsonPath, JSON.stringify(data, null, 2));
+          log.info(`Successfully saved JSON at: ${jsonPath}`);
+
+          // Push data to the system
+          await pushData(data);
         } catch (error) {
-          log.error(`Error processing PDF ${pdfLink?.url}: ${error}`);
-          await pushData({
+          log.error(`Error processing PDF ${pdfLink?.url}:`, error);
+          
+          const errorData = {
             title: path.basename(pdfLink?.url ?? ""),
             url: pdfLink?.url,
-            counter: `${pageCounter} / ${config.maxPagesToCrawl}`,
+            counter: `${pdfLink.url}`,
             sourceUrl: requestUrl,
             filetype: FileFormat.Pdf,
             status: CrawlStatus.Failed,
             datetime: new Date().toISOString(),
             error: `${error}`,
-          });
+          };
+
+          // // Save error information to JSON
+          // await writeFile(jsonPath, JSON.stringify(errorData, null, 2));
+          // log.info(`Saved error information to JSON at: ${jsonPath}`);
+
+          // Push error data to the system
+          await pushData(errorData);
         }
       }),
     );
@@ -306,8 +341,26 @@ async function extractAndProcessHtmlContent(
     const pdfPath = path.join(pdfFolder, `${safeFilename}.pdf`);
     const jsonPath = path.join(jsonFolder, `${safeFilename}.json`);
 
+    log.info('File paths generated:', {
+      originalUrl: requestUrl,
+      safeFilename,
+      pdfPath,
+      jsonPath
+    });
+
+    // Check file existence separately for better logging
+    const pdfExists = await checkIfFileExists(pdfPath);
+    const jsonExists = await checkIfFileExists(jsonPath);
+    
+    log.info('File existence check:', {
+      pdfPath,
+      pdfExists,
+      jsonPath,
+      jsonExists
+    });
+
     // Skip if both PDF and JSON already exist
-    if (await checkIfFileExists(pdfPath) && await checkIfFileExists(jsonPath)) {
+    if (pdfExists && jsonExists) {
       log.info(`Skipping ${requestUrl} - Files already exist`);
       return;
     }
