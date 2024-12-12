@@ -489,6 +489,8 @@ async function getPageLinks(page: Page) {
 export async function crawl(config: Config) {
   configSchema.parse(config);
   pageCounter = 0;
+  newPdfCounter = 0;
+  newHtmlCounter = 0;
   const outputFolder = `${baseFolder}/${config.name || "defaultFolder"}`;
 
   // await prepareOutputFolder(outputFolder);
@@ -809,36 +811,14 @@ export async function write(config: Config): Promise<PathLike> {
 
     // Upload to GCS if configured
     if (process.env.GCP_BUCKET_NAME && config.uploadToGCP) {
-      console.log("GCP Configuration:");
-      console.log("- Credentials Path:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
-      console.log("- Bucket Name:", process.env.GCP_BUCKET_NAME);
-      
+      console.log("GCP Credentials Path:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+
       if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
         console.error("Error: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set");
         return crawlLogFile;
       }
 
-      // Verify if the credentials file exists
       try {
-        const credentialsExist = await access(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-          .then(() => true)
-          .catch(() => false);
-        
-        if (!credentialsExist) {
-          console.error("Error: GCP credentials file not found at:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
-          return crawlLogFile;
-        }
-
-        // Try to read and parse the credentials file to ensure it's valid JSON
-        try {
-          const credentialsContent = await readFile(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8');
-          JSON.parse(credentialsContent);
-        } catch (error) {
-          console.error("Error: Invalid GCP credentials file format");
-          console.error(error);
-          return crawlLogFile;
-        }
-
         const storage = new Storage({
           keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
         });
@@ -1089,36 +1069,14 @@ class GPTCrawlerCore {
 
       // Upload to GCS if configured
       if (process.env.GCP_BUCKET_NAME && this.config.uploadToGCP) {
-        console.log("GCP Configuration:");
-        console.log("- Credentials Path:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
-        console.log("- Bucket Name:", process.env.GCP_BUCKET_NAME);
-        
+        console.log("GCP Credentials Path:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+
         if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
           console.error("Error: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set");
           return crawlLogFile;
         }
 
-        // Verify if the credentials file exists
         try {
-          const credentialsExist = await access(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-            .then(() => true)
-            .catch(() => false);
-          
-          if (!credentialsExist) {
-            console.error("Error: GCP credentials file not found at:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
-            return crawlLogFile;
-          }
-
-          // Try to read and parse the credentials file to ensure it's valid JSON
-          try {
-            const credentialsContent = await readFile(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8');
-            JSON.parse(credentialsContent);
-          } catch (error) {
-            console.error("Error: Invalid GCP credentials file format");
-            console.error(error);
-            return crawlLogFile;
-          }
-
           const storage = new Storage({
             keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
           });
