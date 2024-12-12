@@ -221,7 +221,7 @@ async function downloadAndProcessPdfs(
           newPdfCounter++;
           const pdfFileName = safeFilename;
           log.info(
-            `Crawling: PDF ${newPdfCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
+            `Crawling: PDF: [${newPdfCounter}] on page -${pageCounter} / ${config.maxPagesToCrawl}: ${pdfLink?.url} to with name ${pdfFileName} from -> ${requestUrl} -> ${outputPath}`,
           );
 
           const pdfContent = await getPdfContent(pdfLink?.url ?? "");
@@ -809,98 +809,132 @@ export async function write(config: Config): Promise<PathLike> {
 
     // Upload to GCS if configured
     if (process.env.GCP_BUCKET_NAME && config.uploadToGCP) {
-      const storage = new Storage({
-        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-      });
-      const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
+      console.log("GCP Configuration:");
+      console.log("- Credentials Path:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+      console.log("- Bucket Name:", process.env.GCP_BUCKET_NAME);
+      
+      if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        console.error("Error: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set");
+        return crawlLogFile;
+      }
 
-      // Create a folder structure in GCS
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const crawlId = `crawl-${timestamp}`;
+      // Verify if the credentials file exists
+      try {
+        const credentialsExist = await access(process.env.GOOGLE_APPLICATION_CREDENTIALS)
+          .then(() => true)
+          .catch(() => false);
+        
+        if (!credentialsExist) {
+          console.error("Error: GCP credentials file not found at:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+          return crawlLogFile;
+        }
 
-      console.log(
-        `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${crawlId}`,
-      );
+        // Try to read and parse the credentials file to ensure it's valid JSON
+        try {
+          const credentialsContent = await readFile(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8');
+          JSON.parse(credentialsContent);
+        } catch (error) {
+          console.error("Error: Invalid GCP credentials file format");
+          console.error(error);
+          return crawlLogFile;
+        }
 
-      // Upload combined output to root
-      await bucket.upload(crawlMapFile, {
-        destination: `${crawlId}/logs/crawl.map.json`,
-        metadata: {
-          contentType: "application/json",
-        },
-      });
-      console.log("✅ Uploaded combined output");
+        const storage = new Storage({
+          keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+        });
+        const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
 
-      // Upload crawl map to logs directory
-      await bucket.upload(crawlLogFile, {
-        destination: `${crawlId}/logs/crawl.log.json`,
-        metadata: {
-          contentType: "application/json",
-        },
-      });
-      console.log("✅ Uploaded crawl map to logs directory");
+        // Create a folder structure in GCS
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const crawlId = `crawl-${timestamp}`;
 
-      // Upload config-named file to root directory
-      await bucket.upload(configNameFile, {
-        destination: `${crawlId}/${config.name || "default"}.json`,
-        metadata: {
-          contentType: "application/json",
-        },
-      });
-      console.log(`✅ Uploaded ${config.name || "default"}.json to root directory`);
-
-      // Upload JSON files to json directory
-      const jsonFiles = await glob(`${jsonFolder}/*.json`);
-      if (jsonFiles.length > 0) {
-        console.log(`\nUploading ${jsonFiles.length} JSON files...`);
-        await Promise.all(
-          jsonFiles.map(async (filePath) => {
-            const fileName = path.basename(filePath);
-            await bucket.upload(filePath, {
-              destination: `${crawlId}/json/${fileName}`,
-              metadata: {
-                contentType: "application/json",
-              },
-            });
-          }),
+        console.log(
+          `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${crawlId}`,
         );
-        console.log("✅ Uploaded all JSON files");
+
+        // Upload combined output to root
+        await bucket.upload(crawlMapFile, {
+          destination: `${crawlId}/logs/crawl.map.json`,
+          metadata: {
+            contentType: "application/json",
+          },
+        });
+        console.log("✅ Uploaded combined output");
+
+        // Upload crawl map to logs directory
+        await bucket.upload(crawlLogFile, {
+          destination: `${crawlId}/logs/crawl.log.json`,
+          metadata: {
+            contentType: "application/json",
+          },
+        });
+        console.log("✅ Uploaded crawl map to logs directory");
+
+        // Upload config-named file to root directory
+        await bucket.upload(configNameFile, {
+          destination: `${crawlId}/${config.name || "default"}.json`,
+          metadata: {
+            contentType: "application/json",
+          },
+        });
+        console.log(`✅ Uploaded ${config.name || "default"}.json to root directory`);
+
+        // Upload JSON files to json directory
+        const jsonFiles = await glob(`${jsonFolder}/*.json`);
+        if (jsonFiles.length > 0) {
+          console.log(`\nUploading ${jsonFiles.length} JSON files...`);
+          await Promise.all(
+            jsonFiles.map(async (filePath) => {
+              const fileName = path.basename(filePath);
+              await bucket.upload(filePath, {
+                destination: `${crawlId}/json/${fileName}`,
+                metadata: {
+                  contentType: "application/json",
+                },
+              });
+            }),
+          );
+          console.log("✅ Uploaded all JSON files");
+        }
+
+        // Upload PDF files to pdf directory
+        const pdfFolder = `${outputFolder}/pdf`;
+        const pdfFiles = await glob(`${pdfFolder}/*.pdf`);
+        if (pdfFiles.length > 0) {
+          console.log(`\nUploading ${pdfFiles.length} PDF files...`);
+          await Promise.all(
+            pdfFiles.map(async (filePath) => {
+              const fileName = path.basename(filePath);
+              await bucket.upload(filePath, {
+                destination: `${crawlId}/pdf/${fileName}`,
+                metadata: {
+                  contentType: "application/pdf",
+                },
+              });
+            }),
+          );
+          console.log(" Uploaded all PDF files");
+        }
+
+        // Log upload summary
+        console.log("\nUpload Summary:");
+        console.log(`- Combined output: ${crawlId}/logs/crawl.map.json`);
+        console.log(`- Crawl map: ${crawlId}/logs/crawl_map.json`);
+        console.log(`- Config file: ${crawlId}/${config.name || "default"}.json`);
+        console.log(`- JSON files: ${jsonFiles.length}`);
+        console.log(`- PDF files: ${pdfFiles.length}`);
+
+        // Optionally clean up local files
+        if (config.cleanupAfterUpload) {
+          await rm(outputFolder, { recursive: true, force: true });
+          console.log("\n🧹 Cleaned up local files");
+        }
+
+        // return `gs://${process.env.GCP_BUCKET_NAME}/${crawlId}`;
+      } catch (error) {
+        console.error(`Error uploading to GCS: ${error}`);
+        throw error;
       }
-
-      // Upload PDF files to pdf directory
-      const pdfFolder = `${outputFolder}/pdf`;
-      const pdfFiles = await glob(`${pdfFolder}/*.pdf`);
-      if (pdfFiles.length > 0) {
-        console.log(`\nUploading ${pdfFiles.length} PDF files...`);
-        await Promise.all(
-          pdfFiles.map(async (filePath) => {
-            const fileName = path.basename(filePath);
-            await bucket.upload(filePath, {
-              destination: `${crawlId}/pdf/${fileName}`,
-              metadata: {
-                contentType: "application/pdf",
-              },
-            });
-          }),
-        );
-        console.log(" Uploaded all PDF files");
-      }
-
-      // Log upload summary
-      console.log("\nUpload Summary:");
-      console.log(`- Combined output: ${crawlId}/logs/crawl.map.json`);
-      console.log(`- Crawl map: ${crawlId}/logs/crawl_map.json`);
-      console.log(`- Config file: ${crawlId}/${config.name || "default"}.json`);
-      console.log(`- JSON files: ${jsonFiles.length}`);
-      console.log(`- PDF files: ${pdfFiles.length}`);
-
-      // Optionally clean up local files
-      if (config.cleanupAfterUpload) {
-        await rm(outputFolder, { recursive: true, force: true });
-        console.log("\n🧹 Cleaned up local files");
-      }
-
-      // return `gs://${process.env.GCP_BUCKET_NAME}/${crawlId}`;
     }
 
     console.log(`Wrote combined JSON to ${crawlMapFile}`);
@@ -1055,96 +1089,130 @@ class GPTCrawlerCore {
 
       // Upload to GCS if configured
       if (process.env.GCP_BUCKET_NAME && this.config.uploadToGCP) {
-        const storage = new Storage({
-          keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-        });
-        const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
+        console.log("GCP Configuration:");
+        console.log("- Credentials Path:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+        console.log("- Bucket Name:", process.env.GCP_BUCKET_NAME);
+        
+        if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+          console.error("Error: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set");
+          return crawlLogFile;
+        }
 
-        // Create a folder structure in GCS
-        const gcsBasePath = `${this.config.name}`;
+        // Verify if the credentials file exists
+        try {
+          const credentialsExist = await access(process.env.GOOGLE_APPLICATION_CREDENTIALS)
+            .then(() => true)
+            .catch(() => false);
+          
+          if (!credentialsExist) {
+            console.error("Error: GCP credentials file not found at:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+            return crawlLogFile;
+          }
 
-        console.log(
-          `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`,
-        );
+          // Try to read and parse the credentials file to ensure it's valid JSON
+          try {
+            const credentialsContent = await readFile(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8');
+            JSON.parse(credentialsContent);
+          } catch (error) {
+            console.error("Error: Invalid GCP credentials file format");
+            console.error(error);
+            return crawlLogFile;
+          }
 
-        // Upload combined output to root
-        await bucket.upload(crawlMapFile, {
-          destination: `${gcsBasePath}/logs/crawl.map.json`,
-          metadata: {
-            contentType: "application/json",
-          },
-        });
-        console.log("✅ Uploaded combined output");
+          const storage = new Storage({
+            keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+          });
+          const bucket = storage.bucket(process.env.GCP_BUCKET_NAME);
 
-        // Upload crawl map to logs directory
-        await bucket.upload(crawlLogFile, {
-          destination: `${gcsBasePath}/logs/crawl.log.json`,
-          metadata: {
-            contentType: "application/json",
-          },
-        });
-        console.log("✅ Uploaded crawl map to logs directory");
+          // Create a folder structure in GCS
+          const gcsBasePath = `${this.config.name}`;
 
-        // Upload config-named file to root directory
-        await bucket.upload(configNameFile, {
-          destination: `${gcsBasePath}/${this.config.name || "default"}.json`,
-          metadata: {
-            contentType: "application/json",
-          },
-        });
-        console.log(`✅ Uploaded ${this.config.name || "default"}.json to root directory`);
-
-        // Upload JSON files to json directory
-        const jsonFiles = await glob(`${jsonFolder}/*.json`);
-        if (jsonFiles.length > 0) {
-          console.log(`\nUploading ${jsonFiles.length} JSON files...`);
-          await Promise.all(
-            jsonFiles.map(async (filePath) => {
-              const fileName = path.basename(filePath);
-              await bucket.upload(filePath, {
-                destination: `${gcsBasePath}/json/${fileName}`,
-                metadata: {
-                  contentType: "application/json",
-                },
-              });
-            }),
+          console.log(
+            `\nUploading results to GCS bucket: ${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`,
           );
-          console.log("✅ Uploaded all JSON files");
+
+          // Upload combined output to root
+          await bucket.upload(crawlMapFile, {
+            destination: `${gcsBasePath}/logs/crawl.map.json`,
+            metadata: {
+              contentType: "application/json",
+            },
+          });
+          console.log("✅ Uploaded combined output");
+
+          // Upload crawl map to logs directory
+          await bucket.upload(crawlLogFile, {
+            destination: `${gcsBasePath}/logs/crawl.log.json`,
+            metadata: {
+              contentType: "application/json",
+            },
+          });
+          console.log("✅ Uploaded crawl map to logs directory");
+
+          // Upload config-named file to root directory
+          await bucket.upload(configNameFile, {
+            destination: `${gcsBasePath}/${this.config.name || "default"}.json`,
+            metadata: {
+              contentType: "application/json",
+            },
+          });
+          console.log(`✅ Uploaded ${this.config.name || "default"}.json to root directory`);
+
+          // Upload JSON files to json directory
+          const jsonFiles = await glob(`${jsonFolder}/*.json`);
+          if (jsonFiles.length > 0) {
+            console.log(`\nUploading ${jsonFiles.length} JSON files...`);
+            await Promise.all(
+              jsonFiles.map(async (filePath) => {
+                const fileName = path.basename(filePath);
+                await bucket.upload(filePath, {
+                  destination: `${gcsBasePath}/json/${fileName}`,
+                  metadata: {
+                    contentType: "application/json",
+                  },
+                });
+              }),
+            );
+            console.log("✅ Uploaded all JSON files");
+          }
+
+          // Upload PDF files to pdf directory
+          const pdfFiles = await glob(`${pdfFolder}/*.pdf`);
+          if (pdfFiles.length > 0) {
+            console.log(`\nUploading ${pdfFiles.length} PDF files...`);
+            await Promise.all(
+              pdfFiles.map(async (filePath) => {
+                const fileName = path.basename(filePath);
+                await bucket.upload(filePath, {
+                  destination: `${gcsBasePath}/pdf/${fileName}`,
+                  metadata: {
+                    contentType: "application/pdf",
+                  },
+                });
+              }),
+            );
+            console.log(" Uploaded all PDF files");
+          }
+
+          // Log upload summary
+          console.log("\nUpload Summary:");
+          console.log(`- Combined output: ${gcsBasePath}/logs/crawl.map.json`);
+          console.log(`- Crawl map: ${gcsBasePath}/logs/crawl_map.json`);
+          console.log(`- Config file: ${gcsBasePath}/${this.config.name || "default"}.json`);
+          console.log(`- JSON files: ${jsonFiles.length}`);
+          console.log(`- PDF files: ${pdfFiles.length}`);
+
+          // Optionally clean up local files
+          if (this.config.cleanupAfterUpload) {
+            await rm(outputFolder, { recursive: true, force: true });
+            console.log("\n🧹 Cleaned up local files");
+          }
+
+          // return `gs://${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`;
+        } catch (error) {
+          console.error(`Error uploading to GCS: ${error}`);
+          throw error;
         }
-
-        // Upload PDF files to pdf directory
-        const pdfFiles = await glob(`${pdfFolder}/*.pdf`);
-        if (pdfFiles.length > 0) {
-          console.log(`\nUploading ${pdfFiles.length} PDF files...`);
-          await Promise.all(
-            pdfFiles.map(async (filePath) => {
-              const fileName = path.basename(filePath);
-              await bucket.upload(filePath, {
-                destination: `${gcsBasePath}/pdf/${fileName}`,
-                metadata: {
-                  contentType: "application/pdf",
-                },
-              });
-            }),
-          );
-          console.log(" Uploaded all PDF files");
-        }
-
-        // Log upload summary
-        console.log("\nUpload Summary:");
-        console.log(`- Combined output: ${gcsBasePath}/logs/crawl.map.json`);
-        console.log(`- Crawl map: ${gcsBasePath}/logs/crawl_map.json`);
-        console.log(`- Config file: ${gcsBasePath}/${this.config.name || "default"}.json`);
-        console.log(`- JSON files: ${jsonFiles.length}`);
-        console.log(`- PDF files: ${pdfFiles.length}`);
-
-        // Optionally clean up local files
-        if (this.config.cleanupAfterUpload) {
-          await rm(outputFolder, { recursive: true, force: true });
-          console.log("\n🧹 Cleaned up local files");
-        }
-
-        // return `gs://${process.env.GCP_BUCKET_NAME}/${gcsBasePath}`;
       }
 
       console.log(`Wrote combined JSON to ${crawlMapFile}`);
