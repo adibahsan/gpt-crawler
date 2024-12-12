@@ -866,15 +866,17 @@ export async function write(config: Config): Promise<PathLike> {
           await Promise.all(
             jsonFiles.map(async (filePath) => {
               const fileName = path.basename(filePath);
+              console.log(`📤 Uploading JSON: ${fileName}`);
               await bucket.upload(filePath, {
                 destination: `${crawlId}/json/${fileName}`,
                 metadata: {
                   contentType: "application/json",
                 },
               });
+              console.log(`✅ Uploaded JSON: ${fileName}`);
             }),
           );
-          console.log("✅ Uploaded all JSON files");
+          console.log("✅ Completed uploading all JSON files");
         }
 
         // Upload PDF files to pdf directory
@@ -885,15 +887,17 @@ export async function write(config: Config): Promise<PathLike> {
           await Promise.all(
             pdfFiles.map(async (filePath) => {
               const fileName = path.basename(filePath);
+              console.log(`📤 Uploading PDF: ${fileName}`);
               await bucket.upload(filePath, {
                 destination: `${crawlId}/pdf/${fileName}`,
                 metadata: {
                   contentType: "application/pdf",
                 },
               });
+              console.log(`✅ Uploaded PDF: ${fileName}`);
             }),
           );
-          console.log(" Uploaded all PDF files");
+          console.log("✅ Completed uploading all PDF files");
         }
 
         // Log upload summary
@@ -1123,12 +1127,14 @@ class GPTCrawlerCore {
             await Promise.all(
               jsonFiles.map(async (filePath) => {
                 const fileName = path.basename(filePath);
+                console.log(`📤 Uploading JSON: ${fileName}`);
                 await bucket.upload(filePath, {
                   destination: `${gcsBasePath}/json/${fileName}`,
                   metadata: {
                     contentType: "application/json",
                   },
                 });
+                console.log(`✅ Uploaded JSON: ${fileName}`);
               }),
             );
             console.log("✅ Uploaded all JSON files");
@@ -1141,12 +1147,14 @@ class GPTCrawlerCore {
             await Promise.all(
               pdfFiles.map(async (filePath) => {
                 const fileName = path.basename(filePath);
+                console.log(`📤 Uploading PDF: ${fileName}`);
                 await bucket.upload(filePath, {
                   destination: `${gcsBasePath}/pdf/${fileName}`,
                   metadata: {
                     contentType: "application/pdf",
                   },
                 });
+                console.log(`✅ Uploaded PDF: ${fileName}`);
               }),
             );
             console.log(" Uploaded all PDF files");
